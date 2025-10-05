@@ -152,6 +152,9 @@ fn render_outline_glyph(
             let sampler = TilingSampler::new(tiling, &pixmap, &state, true);
             write_bitmap(canvas, &bitmap, &state, sampler)?;
         }
+        Paint::Tracing(_) => {
+            panic!("tracing paint should have been handled by layout, not reached text rendering")
+        }
     }
 
     Some(())

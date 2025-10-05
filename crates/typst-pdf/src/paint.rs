@@ -82,6 +82,9 @@ fn convert_paint(
         }
         Paint::Gradient(g) => Ok(convert_gradient(g, on_text, state, size)),
         Paint::Tiling(p) => convert_pattern(gc, p, on_text, surface, state),
+        Paint::Tracing(_) => {
+            panic!("tracing paint should have been handled by layout, not reached rendering")
+        }
     }
 }
 

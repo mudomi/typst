@@ -116,6 +116,9 @@ impl SVGRenderer<'_> {
                 let id = self.push_tiling(tiling, size, fill_transform);
                 self.xml.write_attribute_fmt("stroke", format_args!("url(#{id})"));
             }
+            Paint::Tracing(_) => {
+                panic!("tracing paint should have been handled by layout, not reached SVG shape rendering")
+            }
         }
 
         self.xml.write_attribute("stroke-width", &stroke.thickness.to_pt());

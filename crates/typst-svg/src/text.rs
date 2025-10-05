@@ -223,6 +223,9 @@ impl SVGRenderer<'_> {
                 RelativeTo::Self_ => Transform::identity(),
                 RelativeTo::Parent => state.transform.invert().unwrap(),
             },
+            Paint::Tracing(_) => {
+                panic!("tracing paint should have been handled by layout, not reached SVG text rendering")
+            }
         }
     }
 

@@ -11,6 +11,7 @@ mod polygon;
 mod shape;
 mod stroke;
 mod tiling;
+mod tracing;
 
 pub use self::color::*;
 pub use self::curve::*;
@@ -23,6 +24,7 @@ pub use self::polygon::*;
 pub use self::shape::*;
 pub use self::stroke::*;
 pub use self::tiling::*;
+pub use self::tracing::*;
 
 use crate::foundations::Deprecation;
 use crate::foundations::{Element, Scope, Type};
@@ -33,6 +35,7 @@ pub(super) fn define(global: &mut Scope) {
     global.define_type::<Color>();
     global.define_type::<Gradient>();
     global.define_type::<Tiling>();
+    global.define_type::<Tracing>();
     global.define_type::<Stroke>();
     global.define_elem::<ImageElem>();
     global.define_elem::<LineElem>();

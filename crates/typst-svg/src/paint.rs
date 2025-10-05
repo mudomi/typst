@@ -48,6 +48,9 @@ impl SVGRenderer<'_> {
                 let id = self.push_tiling(tiling, size, ts);
                 self.xml.write_attribute_fmt("fill", format_args!("url(#{id})"));
             }
+            Paint::Tracing(_) => {
+                panic!("tracing paint should have been handled by layout, not reached SVG rendering")
+            }
         }
         match fill_rule {
             FillRule::NonZero => self.xml.write_attribute("fill-rule", "nonzero"),

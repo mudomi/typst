@@ -10,7 +10,7 @@ use typst_library::layout::{
     Sides, Size,
 };
 use typst_library::visualize::{
-    CircleElem, CloseMode, Curve, CurveComponent, CurveElem, EllipseElem, FillRule,
+    CircleElem, CloseMode, Curve, CurveComponent, CurveElem, CurveItem, EllipseElem, FillRule,
     FixedStroke, Geometry, LineCap, LineElem, Paint, PathElem, PathVertex, PolygonElem,
     RectElem, Shape, SquareElem, Stroke,
 };
@@ -219,6 +219,14 @@ pub fn layout_curve(
         Smart::Auto => None,
         Smart::Custom(stroke) => stroke.map(Stroke::unwrap_or_default),
     };
+
+    // Check if the stroke contains tracing - apply pattern along path algorithm
+    if let Some(ref fixed_stroke) = stroke {
+        if let Paint::Tracing(ref tracing) = fixed_stroke.paint {
+            // Apply the pattern along path effect to the skeleton curve
+            return apply_tracing(&curve, tracing, elem, region, styles);
+        }
+    }
 
     let mut frame = Frame::soft(size);
     let shape = Shape {
@@ -1424,4 +1432,130 @@ fn bezier_arc_control(start: Point, center: Point, end: Point) -> [Point; 2] {
     let control_2 = Point::new(center.x + b.x + k2 * b.y, center.y + b.y - k2 * b.x);
 
     [control_1, control_2]
+}
+
+/// Apply a pattern along a path using the tracing algorithm
+fn apply_tracing(
+    skeleton: &Curve,
+    tracing: &::typst_library::visualize::Tracing,
+    elem: &Packed<CurveElem>,
+    region: Region,
+    styles: StyleChain,
+) -> SourceResult<Frame> {
+    // Get tracing parameters
+    let (_, spacing) = tracing.params();
+    let tracing_content = tracing.content();
+
+    // Try to extract a CurveElem from the tracing content
+    let pattern_elem = match tracing_content.to_packed::<CurveElem>() {
+        Some(elem) => elem,
+        None => {
+            bail!(elem.span(), "tracing pattern must be a curve element");
+        }
+    };
+
+    // Build pattern curve
+    let mut pattern_builder = CurveBuilder::new(region, styles);
+    for item in &pattern_elem.components {
+        match item {
+            CurveComponent::Move(element) => {
+                let relative = element.relative.get(styles);
+                let point = pattern_builder.resolve_point(element.start, relative);
+                pattern_builder.move_(point);
+            }
+            CurveComponent::Line(element) => {
+                let relative = element.relative.get(styles);
+                let point = pattern_builder.resolve_point(element.end, relative);
+                pattern_builder.line(point);
+            }
+            CurveComponent::Quad(element) => {
+                let relative = element.relative.get(styles);
+                let end = pattern_builder.resolve_point(element.end, relative);
+                let control = match element.control {
+                    Smart::Auto => {
+                        control_c2q(pattern_builder.last_point, pattern_builder.last_control_from)
+                    }
+                    Smart::Custom(Some(p)) => pattern_builder.resolve_point(p, relative),
+                    Smart::Custom(None) => end,
+                };
+                pattern_builder.quad(control, end);
+            }
+            CurveComponent::Cubic(element) => {
+                let relative = element.relative.get(styles);
+                let end = pattern_builder.resolve_point(element.end, relative);
+                let c1 = match element.control_start {
+                    Some(Smart::Custom(p)) => pattern_builder.resolve_point(p, relative),
+                    Some(Smart::Auto) => pattern_builder.last_control_from,
+                    None => pattern_builder.last_point,
+                };
+                let c2 = match element.control_end {
+                    Some(p) => pattern_builder.resolve_point(p, relative),
+                    None => end,
+                };
+                pattern_builder.cubic(c1, c2, end);
+            }
+            CurveComponent::Close(element) => {
+                pattern_builder.close(element.mode.get(styles));
+            }
+        }
+    }
+
+    let (pattern_curve, _) = pattern_builder.finish();
+
+    if pattern_curve.is_empty() {
+        bail!(elem.span(), "tracing pattern curve is empty");
+    }
+
+    // Calculate skeleton length using the method from tracing
+    let skeleton_length = ::typst_library::visualize::calculate_curve_length(skeleton);
+    if skeleton_length <= 0.0 {
+        let frame = Frame::soft(Size::zero());
+        return Ok(frame);
+    }
+
+    // Convert lengths to absolute units
+    let spacing_abs = spacing.resolve(styles).to_raw();
+
+    // Apply the pattern using the tracing algorithm
+    let result_curve = tracing.apply_tracing_algorithm(
+        &pattern_curve,
+        skeleton,
+        spacing_abs,
+        skeleton_length,
+    );
+
+    // Use CurveBuilder to properly build the result and get correct sizing
+    let mut result_builder = CurveBuilder::new(region, styles);
+    for item in &result_curve.0 {
+        match item {
+            CurveItem::Move(p) => {
+                result_builder.move_(*p);
+            }
+            CurveItem::Line(p) => {
+                result_builder.line(*p);
+            }
+            CurveItem::Cubic(c1, c2, end) => {
+                result_builder.cubic(*c1, *c2, *end);
+            }
+            CurveItem::Close => {
+                result_builder.close(CloseMode::default());
+            }
+        }
+    }
+
+    let (final_curve, result_size) = result_builder.finish();
+    let mut frame = Frame::soft(result_size);
+
+    if !final_curve.is_empty() {
+        let fill = pattern_elem.fill.get_cloned(styles);
+        let shape = Shape {
+            geometry: Geometry::Curve(final_curve),
+            stroke: Some(FixedStroke::default()),
+            fill,
+            fill_rule: pattern_elem.fill_rule.get(styles),
+        };
+        frame.push(Point::zero(), FrameItem::Shape(shape, elem.span()));
+    }
+
+    Ok(frame)
 }
