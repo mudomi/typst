@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use ecow::EcoString;
-use crate::foundations::{func, scope, ty, Content, Repr, cast, IntoValue, Value, FromValue, Reflect, CastInfo, Type};
-use crate::diag::{SourceResult, HintedStrResult};
+use crate::foundations::{func, scope, ty, Content, Repr, cast, IntoValue, Value, Reflect, CastInfo, Type, Dict, FromValue};
+use crate::diag::{SourceResult, HintedStrResult, bail};
 use crate::layout::{Abs, Length, Point};
 use crate::visualize::Curve;
 
@@ -167,15 +167,30 @@ impl Default for RepeatType {
     }
 }
 
-/// Pattern specification.
+/// Pattern specification with optional start, repeat, and end curves.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PatternSpec {
-    pub content: Content,
+    pub start: Option<Content>,
+    pub repeat: Option<Content>,
+    pub end: Option<Content>,
+}
+
+impl PatternSpec {
+    /// Create a pattern spec with just a repeat pattern (for backward compatibility).
+    pub fn from_repeat(content: Content) -> Self {
+        Self {
+            start: None,
+            repeat: Some(content),
+            end: None,
+        }
+    }
 }
 
 impl std::hash::Hash for PatternSpec {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.content.hash(state);
+        self.start.hash(state);
+        self.repeat.hash(state);
+        self.end.hash(state);
     }
 }
 
@@ -286,7 +301,11 @@ impl Tracing {
     #[func(constructor)]
     pub fn construct(
         /// The pattern to trace along the path.
-        pattern: Content,
+        ///
+        /// Can be either:
+        /// - A curve element that will be repeated along the path
+        /// - A dictionary with optional `start`, `repeat`, and `end` keys, each containing a curve element
+        pattern_arg: Value,
 
         /// How to repeat the pattern.
         #[named]
@@ -296,19 +315,52 @@ impl Tracing {
         #[named]
         spacing: Option<Length>,
     ) -> SourceResult<Tracing> {
+        // Try to parse the pattern as a PatternSpec (either simple or dictionary form)
+        let pattern = if let Ok(content) = pattern_arg.clone().cast::<Content>() {
+            // Simple form: just a curve
+            PatternSpec::from_repeat(content)
+        } else if let Ok(mut dict) = pattern_arg.cast::<Dict>() {
+            // Dictionary form with start/repeat/end
+            let start = dict.take("start").ok()
+                .map(|v| v.cast::<Content>().ok())
+                .flatten();
+
+            let repeat_content = dict.take("repeat").ok()
+                .map(|v| v.cast::<Content>().ok())
+                .flatten();
+
+            let end = dict.take("end").ok()
+                .map(|v| v.cast::<Content>().ok())
+                .flatten();
+
+            let _ = dict.finish(&["start", "repeat", "end"]);
+
+            PatternSpec {
+                start,
+                repeat: repeat_content,
+                end,
+            }
+        } else {
+            // Fall back to empty pattern spec (will be caught later if invalid)
+            PatternSpec {
+                start: None,
+                repeat: None,
+                end: None,
+            }
+        };
+
+        let repeat_type = repeat.unwrap_or(RepeatType::Scale);
+        let spacing_val = spacing.unwrap_or(Length::zero());
+
         Ok(Self(Arc::new(TracingRepr {
-            pattern: PatternSpec { content: pattern },
-            repeat_type: repeat.unwrap_or(RepeatType::Scale),
-            spacing: spacing.unwrap_or(Length::zero()),
+            pattern,
+            repeat_type,
+            spacing: spacing_val,
         })))
     }
 }
 
 impl Tracing {
-    pub fn content(&self) -> &Content {
-        &self.0.pattern.content
-    }
-
     pub fn pattern(&self) -> &PatternSpec {
         &self.0.pattern
     }
@@ -324,6 +376,75 @@ impl Tracing {
         spacing_abs: f64,
         skeleton_length: f64,
     ) -> Curve {
+        self.apply_tracing_in_range(pattern, skeleton, spacing_abs, skeleton_length, 0.0, skeleton_length)
+    }
+
+    /// Apply a pattern along a skeleton in a specific range.
+    pub fn apply_tracing_in_range(
+        &self,
+        pattern: &Curve,
+        skeleton: &Curve,
+        spacing_abs: f64,
+        skeleton_length: f64,
+        start_offset: f64,
+        end_offset: f64,
+    ) -> Curve {
+        let mut result = Curve::new();
+
+        let centered_pattern = center_pattern(pattern);
+        let pattern_bbox_size = centered_pattern.bbox_size();
+        let pattern_width = pattern_bbox_size.x.to_raw();
+
+        if pattern_width <= 0.0 || skeleton_length <= 0.0 {
+            return result;
+        }
+
+        let arc_table = build_arc_length_table(skeleton, skeleton_length);
+        let available_length = end_offset - start_offset;
+
+        if available_length <= 0.0 {
+            return result;
+        }
+
+        let (num_copies, x_scale) = calculate_pattern_layout(
+            self.0.repeat_type,
+            available_length,
+            pattern_width,
+            spacing_abs,
+        );
+
+        let pattern_step = (pattern_width * x_scale) + spacing_abs;
+        let mut t_offset = start_offset;
+
+        for _ in 0..num_copies {
+            if t_offset + pattern_width * x_scale <= end_offset {
+                let transformed = self.transform_pattern_for_repeat(
+                    self.0.repeat_type,
+                    &centered_pattern,
+                    skeleton,
+                    &arc_table,
+                    t_offset,
+                    x_scale,
+                    skeleton_length,
+                    pattern_width,
+                );
+
+                result.0.extend(transformed.0.iter().cloned());
+            }
+            t_offset += pattern_step;
+        }
+
+        result
+    }
+
+    /// Apply a pattern once at a specific position.
+    pub fn apply_pattern_once(
+        &self,
+        pattern: &Curve,
+        skeleton: &Curve,
+        skeleton_length: f64,
+        offset: f64,
+    ) -> Curve {
         let mut result = Curve::new();
 
         let centered_pattern = center_pattern(pattern);
@@ -336,32 +457,18 @@ impl Tracing {
 
         let arc_table = build_arc_length_table(skeleton, skeleton_length);
 
-        let (num_copies, x_scale) = calculate_pattern_layout(
+        let transformed = self.transform_pattern_for_repeat(
             self.0.repeat_type,
+            &centered_pattern,
+            skeleton,
+            &arc_table,
+            offset,
+            1.0, // No scaling for start/end
             skeleton_length,
             pattern_width,
-            spacing_abs,
         );
 
-        let pattern_step = (pattern_width * x_scale) + spacing_abs;
-        let mut t_offset = 0.0;
-
-        for _ in 0..num_copies {
-            let transformed = self.transform_pattern_for_repeat(
-                self.0.repeat_type,
-                &centered_pattern,
-                skeleton,
-                &arc_table,
-                t_offset,
-                x_scale,
-                skeleton_length,
-                pattern_width,
-            );
-
-            result.0.extend(transformed.0.iter().cloned());
-            t_offset += pattern_step;
-        }
-
+        result.0.extend(transformed.0.iter().cloned());
         result
     }
 

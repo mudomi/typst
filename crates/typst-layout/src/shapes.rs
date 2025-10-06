@@ -1443,6 +1443,29 @@ fn bezier_arc_control(start: Point, center: Point, end: Point) -> [Point; 2] {
     [control_1, control_2]
 }
 
+/// Helper to build a curve from a content element
+fn build_curve_from_content(
+    content: &Content,
+    region: Region,
+    styles: StyleChain,
+    elem: &Packed<CurveElem>,
+) -> SourceResult<Curve> {
+    let pattern_elem = match content.to_packed::<CurveElem>() {
+        Some(elem) => elem,
+        None => {
+            bail!(elem.span(), "tracing pattern must be a curve element");
+        }
+    };
+
+    let (pattern_curve, _) = build_curve_from_components(&pattern_elem.components, region, styles);
+
+    if pattern_curve.is_empty() {
+        bail!(elem.span(), "tracing pattern curve is empty");
+    }
+
+    Ok(pattern_curve)
+}
+
 /// Apply a pattern along a path using the tracing algorithm
 fn apply_tracing(
     skeleton: &Curve,
@@ -1453,40 +1476,87 @@ fn apply_tracing(
 ) -> SourceResult<Frame> {
     // Get tracing parameters
     let (_, spacing) = tracing.params();
-    let tracing_content = tracing.content();
+    let pattern_spec = tracing.pattern();
 
-    // Try to extract a CurveElem from the tracing content
-    let pattern_elem = match tracing_content.to_packed::<CurveElem>() {
-        Some(elem) => elem,
-        None => {
-            bail!(elem.span(), "tracing pattern must be a curve element");
-        }
-    };
-
-    // Build pattern curve using the shared helper function
-    let (pattern_curve, _) = build_curve_from_components(&pattern_elem.components, region, styles);
-
-    if pattern_curve.is_empty() {
-        bail!(elem.span(), "tracing pattern curve is empty");
-    }
-
-    // Calculate skeleton length using the method from tracing
+    // Calculate skeleton length
     let skeleton_length = ::typst_library::visualize::calculate_curve_length(skeleton);
     if skeleton_length <= 0.0 {
-        let frame = Frame::soft(Size::zero());
-        return Ok(frame);
+        return Ok(Frame::soft(Size::zero()));
     }
 
-    // Convert lengths to absolute units
+    // Convert spacing to absolute units
     let spacing_abs = spacing.resolve(styles).to_raw();
 
-    // Apply the pattern using the tracing algorithm
-    let result_curve = tracing.apply_tracing_algorithm(
-        &pattern_curve,
-        skeleton,
-        spacing_abs,
-        skeleton_length,
-    );
+    // Build start, repeat, and end curves if they exist
+    let start_curve = pattern_spec.start.as_ref()
+        .map(|c| build_curve_from_content(c, region, styles, elem))
+        .transpose()?;
+
+    let repeat_curve = pattern_spec.repeat.as_ref()
+        .map(|c| build_curve_from_content(c, region, styles, elem))
+        .transpose()?;
+
+    let end_curve = pattern_spec.end.as_ref()
+        .map(|c| build_curve_from_content(c, region, styles, elem))
+        .transpose()?;
+
+    // Calculate widths for each part
+    let start_width = start_curve.as_ref()
+        .map(|c| c.bbox_size().x.to_raw())
+        .unwrap_or(0.0);
+
+    let end_width = end_curve.as_ref()
+        .map(|c| c.bbox_size().x.to_raw())
+        .unwrap_or(0.0);
+
+    // Calculate section boundaries
+    let mut result_curve = Curve::new();
+    let mut repeat_start = 0.0;
+    let mut repeat_end = skeleton_length;
+
+    // Apply start pattern if it exists
+    if let Some(start) = &start_curve {
+        let start_result = tracing.apply_pattern_once(
+            start,
+            skeleton,
+            skeleton_length,
+            0.0,
+        );
+        result_curve.0.extend(start_result.0.iter().cloned());
+        repeat_start = start_width + spacing_abs;
+    }
+
+    // Reserve space for end pattern if it exists
+    if end_curve.is_some() {
+        repeat_end = skeleton_length - end_width - spacing_abs;
+    }
+
+    // Apply repeat pattern if it exists and there's space
+    if let Some(repeat) = &repeat_curve {
+        if repeat_end > repeat_start {
+            let repeat_result = tracing.apply_tracing_in_range(
+                repeat,
+                skeleton,
+                spacing_abs,
+                skeleton_length,
+                repeat_start,
+                repeat_end,
+            );
+            result_curve.0.extend(repeat_result.0.iter().cloned());
+        }
+    }
+
+    // Apply end pattern if it exists
+    if let Some(end) = &end_curve {
+        let end_offset = skeleton_length - end_width;
+        let end_result = tracing.apply_pattern_once(
+            end,
+            skeleton,
+            skeleton_length,
+            end_offset,
+        );
+        result_curve.0.extend(end_result.0.iter().cloned());
+    }
 
     // Use CurveBuilder to properly build the result and get correct sizing
     let mut result_builder = CurveBuilder::new(region, styles);
@@ -1511,12 +1581,11 @@ fn apply_tracing(
     let mut frame = Frame::soft(result_size);
 
     if !final_curve.is_empty() {
-        let fill = pattern_elem.fill.get_cloned(styles);
         let shape = Shape {
             geometry: Geometry::Curve(final_curve),
             stroke: Some(FixedStroke::default()),
-            fill,
-            fill_rule: pattern_elem.fill_rule.get(styles),
+            fill: None,
+            fill_rule: FillRule::default(),
         };
         frame.push(Point::zero(), FrameItem::Shape(shape, elem.span()));
     }
