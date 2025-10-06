@@ -143,18 +143,15 @@ pub fn layout_path(
     Ok(frame)
 }
 
-/// Layout the curve.
-#[typst_macros::time(span = elem.span())]
-pub fn layout_curve(
-    elem: &Packed<CurveElem>,
-    _: &mut Engine,
-    _: Locator,
-    styles: StyleChain,
+/// Build a curve from components using the curve builder.
+fn build_curve_from_components(
+    components: &[CurveComponent],
     region: Region,
-) -> SourceResult<Frame> {
+    styles: StyleChain,
+) -> (Curve, Size) {
     let mut builder = CurveBuilder::new(region, styles);
 
-    for item in &elem.components {
+    for item in components {
         match item {
             CurveComponent::Move(element) => {
                 let relative = element.relative.get(styles);
@@ -202,7 +199,19 @@ pub fn layout_curve(
         }
     }
 
-    let (curve, size) = builder.finish();
+    builder.finish()
+}
+
+/// Layout the curve.
+#[typst_macros::time(span = elem.span())]
+pub fn layout_curve(
+    elem: &Packed<CurveElem>,
+    _: &mut Engine,
+    _: Locator,
+    styles: StyleChain,
+    region: Region,
+) -> SourceResult<Frame> {
+    let (curve, size) = build_curve_from_components(&elem.components, region, styles);
     if curve.is_empty() {
         return Ok(Frame::soft(size));
     }
@@ -1454,53 +1463,8 @@ fn apply_tracing(
         }
     };
 
-    // Build pattern curve
-    let mut pattern_builder = CurveBuilder::new(region, styles);
-    for item in &pattern_elem.components {
-        match item {
-            CurveComponent::Move(element) => {
-                let relative = element.relative.get(styles);
-                let point = pattern_builder.resolve_point(element.start, relative);
-                pattern_builder.move_(point);
-            }
-            CurveComponent::Line(element) => {
-                let relative = element.relative.get(styles);
-                let point = pattern_builder.resolve_point(element.end, relative);
-                pattern_builder.line(point);
-            }
-            CurveComponent::Quad(element) => {
-                let relative = element.relative.get(styles);
-                let end = pattern_builder.resolve_point(element.end, relative);
-                let control = match element.control {
-                    Smart::Auto => {
-                        control_c2q(pattern_builder.last_point, pattern_builder.last_control_from)
-                    }
-                    Smart::Custom(Some(p)) => pattern_builder.resolve_point(p, relative),
-                    Smart::Custom(None) => end,
-                };
-                pattern_builder.quad(control, end);
-            }
-            CurveComponent::Cubic(element) => {
-                let relative = element.relative.get(styles);
-                let end = pattern_builder.resolve_point(element.end, relative);
-                let c1 = match element.control_start {
-                    Some(Smart::Custom(p)) => pattern_builder.resolve_point(p, relative),
-                    Some(Smart::Auto) => pattern_builder.last_control_from,
-                    None => pattern_builder.last_point,
-                };
-                let c2 = match element.control_end {
-                    Some(p) => pattern_builder.resolve_point(p, relative),
-                    None => end,
-                };
-                pattern_builder.cubic(c1, c2, end);
-            }
-            CurveComponent::Close(element) => {
-                pattern_builder.close(element.mode.get(styles));
-            }
-        }
-    }
-
-    let (pattern_curve, _) = pattern_builder.finish();
+    // Build pattern curve using the shared helper function
+    let (pattern_curve, _) = build_curve_from_components(&pattern_elem.components, region, styles);
 
     if pattern_curve.is_empty() {
         bail!(elem.span(), "tracing pattern curve is empty");

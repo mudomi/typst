@@ -13,6 +13,140 @@ const BEZIER_TOLERANCE: f64 = 0.01;
 const BEZIER_MAX_DEPTH: u32 = 8;
 const MIN_SCALE_FACTOR: f64 = 0.1;
 
+/// Trait for pattern transformation strategies.
+trait PatternTransformer {
+    fn transform(
+        &self,
+        pattern: &Curve,
+        skeleton: &Curve,
+        arc_table: &[(f64, f64)],
+        t_offset: f64,
+        x_scale: f64,
+        skeleton_length: f64,
+        pattern_width: f64,
+    ) -> Curve;
+}
+
+/// Transformation for None repeat type: simple translation.
+struct NoneTransformer;
+
+impl PatternTransformer for NoneTransformer {
+    fn transform(
+        &self,
+        pattern: &Curve,
+        skeleton: &Curve,
+        arc_table: &[(f64, f64)],
+        t_offset: f64,
+        _x_scale: f64,
+        skeleton_length: f64,
+        pattern_width: f64,
+    ) -> Curve {
+        let mut result = Curve::new();
+        let pattern_center_pos = t_offset + pattern_width / 2.0;
+
+        if pattern_center_pos < 0.0 || pattern_center_pos > skeleton_length {
+            return result;
+        }
+
+        if let Some((skeleton_center, _)) = point_and_normal_at_length(skeleton, arc_table, pattern_center_pos) {
+            for item in &pattern.0 {
+                match item {
+                    crate::visualize::CurveItem::Move(p) => {
+                        result.move_(Point::new(p.x + skeleton_center.x, p.y + skeleton_center.y));
+                    }
+                    crate::visualize::CurveItem::Line(p) => {
+                        result.line(Point::new(p.x + skeleton_center.x, p.y + skeleton_center.y));
+                    }
+                    crate::visualize::CurveItem::Cubic(c1, c2, p) => {
+                        result.cubic(
+                            Point::new(c1.x + skeleton_center.x, c1.y + skeleton_center.y),
+                            Point::new(c2.x + skeleton_center.x, c2.y + skeleton_center.y),
+                            Point::new(p.x + skeleton_center.x, p.y + skeleton_center.y),
+                        );
+                    }
+                    crate::visualize::CurveItem::Close => {
+                        result.close();
+                    }
+                }
+            }
+        }
+
+        result
+    }
+}
+
+/// Transformation for Rotate repeat type: rotation without deformation.
+struct RotateTransformer;
+
+impl PatternTransformer for RotateTransformer {
+    fn transform(
+        &self,
+        pattern: &Curve,
+        skeleton: &Curve,
+        arc_table: &[(f64, f64)],
+        t_offset: f64,
+        _x_scale: f64,
+        skeleton_length: f64,
+        pattern_width: f64,
+    ) -> Curve {
+        transform_pattern_affine(pattern, skeleton, arc_table, t_offset, None, skeleton_length, pattern_width)
+    }
+}
+
+/// Transformation for Scale repeat type: uniform deformation in both axes.
+struct ScaleTransformer;
+
+impl PatternTransformer for ScaleTransformer {
+    fn transform(
+        &self,
+        pattern: &Curve,
+        skeleton: &Curve,
+        arc_table: &[(f64, f64)],
+        t_offset: f64,
+        x_scale: f64,
+        skeleton_length: f64,
+        _pattern_width: f64,
+    ) -> Curve {
+        deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, x_scale, x_scale, skeleton_length)
+    }
+}
+
+/// Transformation for Preserve repeat type: deformation without scaling.
+struct PreserveTransformer;
+
+impl PatternTransformer for PreserveTransformer {
+    fn transform(
+        &self,
+        pattern: &Curve,
+        skeleton: &Curve,
+        arc_table: &[(f64, f64)],
+        t_offset: f64,
+        _x_scale: f64,
+        skeleton_length: f64,
+        _pattern_width: f64,
+    ) -> Curve {
+        deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, 1.0, 1.0, skeleton_length)
+    }
+}
+
+/// Transformation for Stretch repeat type: horizontal deformation only.
+struct StretchTransformer;
+
+impl PatternTransformer for StretchTransformer {
+    fn transform(
+        &self,
+        pattern: &Curve,
+        skeleton: &Curve,
+        arc_table: &[(f64, f64)],
+        t_offset: f64,
+        x_scale: f64,
+        skeleton_length: f64,
+        _pattern_width: f64,
+    ) -> Curve {
+        deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, x_scale, 1.0, skeleton_length)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RepeatType {
     /// Scale uniformly to fill the path.
@@ -196,16 +330,11 @@ impl Tracing {
         let pattern_bbox_size = centered_pattern.bbox_size();
         let pattern_width = pattern_bbox_size.x.to_raw();
 
-        let (arc_table, skeleton_arc_length) = build_arc_length_table(skeleton);
-        let skeleton_length = if skeleton_arc_length > 0.0 {
-            skeleton_arc_length
-        } else {
-            skeleton_length
-        };
-
         if pattern_width <= 0.0 || skeleton_length <= 0.0 {
             return result;
         }
+
+        let arc_table = build_arc_length_table(skeleton, skeleton_length);
 
         let (num_copies, x_scale) = calculate_pattern_layout(
             self.0.repeat_type,
@@ -247,193 +376,120 @@ impl Tracing {
         skeleton_length: f64,
         pattern_width: f64,
     ) -> Curve {
-        match repeat {
-            RepeatType::None => self.transform_pattern_none(
-                pattern,
-                skeleton,
-                arc_table,
-                t_offset,
-                skeleton_length,
-                pattern_width,
-            ),
-            RepeatType::Rotate => self.transform_pattern_affine(
-                pattern,
-                skeleton,
-                arc_table,
-                t_offset,
-                None,
-                skeleton_length,
-                pattern_width,
-            ),
-            RepeatType::Scale => self.deform_pattern_along_skeleton(
-                pattern,
-                skeleton,
-                arc_table,
-                t_offset,
-                x_scale,
-                x_scale,
-                skeleton_length,
-            ),
-            RepeatType::Preserve => self.deform_pattern_along_skeleton(
-                pattern,
-                skeleton,
-                arc_table,
-                t_offset,
-                1.0,
-                1.0,
-                skeleton_length,
-            ),
-            RepeatType::Stretch => self.deform_pattern_along_skeleton(
-                pattern,
-                skeleton,
-                arc_table,
-                t_offset,
-                x_scale,
-                1.0,
-                skeleton_length,
-            ),
-        }
+        let transformer: &dyn PatternTransformer = match repeat {
+            RepeatType::None => &NoneTransformer,
+            RepeatType::Rotate => &RotateTransformer,
+            RepeatType::Scale => &ScaleTransformer,
+            RepeatType::Preserve => &PreserveTransformer,
+            RepeatType::Stretch => &StretchTransformer,
+        };
+
+        transformer.transform(
+            pattern,
+            skeleton,
+            arc_table,
+            t_offset,
+            x_scale,
+            skeleton_length,
+            pattern_width,
+        )
     }
 
-    /// Maps pattern points along the skeleton curve with independent x/y scaling.
-    fn deform_pattern_along_skeleton(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        arc_table: &[(f64, f64)],
-        t_offset: f64,
-        x_scale: f64,
-        y_scale: f64,
-        skeleton_length: f64,
-    ) -> Curve {
-        let mut result = Curve::new();
-        let pattern_samples = sample_pattern_parametrically(pattern, PATTERN_SAMPLE_COUNT);
+}
 
-        if pattern_samples.is_empty() {
-            return result;
-        }
+/// Maps pattern points along the skeleton curve with independent x/y scaling.
+fn deform_pattern_along_skeleton(
+    pattern: &Curve,
+    skeleton: &Curve,
+    arc_table: &[(f64, f64)],
+    t_offset: f64,
+    x_scale: f64,
+    y_scale: f64,
+    skeleton_length: f64,
+) -> Curve {
+    let mut result = Curve::new();
+    let pattern_samples = sample_pattern_parametrically(pattern, PATTERN_SAMPLE_COUNT);
 
-        let mut is_first_point = true;
+    if pattern_samples.is_empty() {
+        return result;
+    }
 
-        for (pattern_x, pattern_y) in pattern_samples {
-            let x = pattern_x * x_scale;
-            let y = pattern_y * y_scale;
-            let skeleton_arc_length = t_offset + x;
+    let mut is_first_point = true;
 
-            if skeleton_arc_length >= 0.0 && skeleton_arc_length <= skeleton_length {
-                if let Some((skeleton_pt, normal)) = point_and_normal_at_length(skeleton, arc_table, skeleton_arc_length) {
-                    let final_pt = Point::new(
-                        skeleton_pt.x + normal.x * y,
-                        skeleton_pt.y + normal.y * y,
-                    );
+    for (pattern_x, pattern_y) in pattern_samples {
+        let x = pattern_x * x_scale;
+        let y = pattern_y * y_scale;
+        let skeleton_arc_length = t_offset + x;
 
-                    if is_first_point {
-                        result.move_(final_pt);
-                        is_first_point = false;
-                    } else {
-                        result.line(final_pt);
-                    }
+        if skeleton_arc_length >= 0.0 && skeleton_arc_length <= skeleton_length {
+            if let Some((skeleton_pt, normal)) = point_and_normal_at_length(skeleton, arc_table, skeleton_arc_length) {
+                let final_pt = Point::new(
+                    skeleton_pt.x + normal.x * y,
+                    skeleton_pt.y + normal.y * y,
+                );
+
+                if is_first_point {
+                    result.move_(final_pt);
+                    is_first_point = false;
+                } else {
+                    result.line(final_pt);
                 }
             }
         }
-
-        result
     }
 
-    /// Apply rotation and optional scaling while preserving the pattern's original shape.
-    fn transform_pattern_affine(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        arc_table: &[(f64, f64)],
-        t_offset: f64,
-        scale_factor: Option<f64>,
-        skeleton_length: f64,
-        pattern_width: f64,
-    ) -> Curve {
-        let mut result = Curve::new();
+    result
+}
 
-        let scale = scale_factor.unwrap_or(1.0);
-        let pattern_center_pos = t_offset + (pattern_width * scale) / 2.0;
+/// Apply rotation and optional scaling while preserving the pattern's original shape.
+fn transform_pattern_affine(
+    pattern: &Curve,
+    skeleton: &Curve,
+    arc_table: &[(f64, f64)],
+    t_offset: f64,
+    scale_factor: Option<f64>,
+    skeleton_length: f64,
+    pattern_width: f64,
+) -> Curve {
+    let mut result = Curve::new();
 
-        if pattern_center_pos < 0.0 || pattern_center_pos > skeleton_length {
-            return result;
-        }
+    let scale = scale_factor.unwrap_or(1.0);
+    let pattern_center_pos = t_offset + (pattern_width * scale) / 2.0;
 
-        if let Some((skeleton_center, skeleton_normal)) = point_and_normal_at_length(skeleton, arc_table, pattern_center_pos) {
-            let skeleton_tangent = Point::new(skeleton_normal.y, -skeleton_normal.x);
-            let angle = skeleton_tangent.y.to_raw().atan2(skeleton_tangent.x.to_raw());
-            let cos_a = angle.cos();
-            let sin_a = angle.sin();
+    if pattern_center_pos < 0.0 || pattern_center_pos > skeleton_length {
+        return result;
+    }
 
-            for item in &pattern.0 {
-                match item {
-                    crate::visualize::CurveItem::Move(p) => {
-                        let transformed = transform_point_affine(*p, skeleton_center, cos_a, sin_a, scale_factor);
-                        result.move_(transformed);
-                    }
-                    crate::visualize::CurveItem::Line(p) => {
-                        let transformed = transform_point_affine(*p, skeleton_center, cos_a, sin_a, scale_factor);
-                        result.line(transformed);
-                    }
-                    crate::visualize::CurveItem::Cubic(c1, c2, p) => {
-                        let transformed_c1 = transform_point_affine(*c1, skeleton_center, cos_a, sin_a, scale_factor);
-                        let transformed_c2 = transform_point_affine(*c2, skeleton_center, cos_a, sin_a, scale_factor);
-                        let transformed_p = transform_point_affine(*p, skeleton_center, cos_a, sin_a, scale_factor);
-                        result.cubic(transformed_c1, transformed_c2, transformed_p);
-                    }
-                    crate::visualize::CurveItem::Close => {
-                        result.close();
-                    }
+    if let Some((skeleton_center, skeleton_normal)) = point_and_normal_at_length(skeleton, arc_table, pattern_center_pos) {
+        let skeleton_tangent = Point::new(skeleton_normal.y, -skeleton_normal.x);
+        let angle = skeleton_tangent.y.to_raw().atan2(skeleton_tangent.x.to_raw());
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+
+        for item in &pattern.0 {
+            match item {
+                crate::visualize::CurveItem::Move(p) => {
+                    let transformed = transform_point_affine(*p, skeleton_center, cos_a, sin_a, scale_factor);
+                    result.move_(transformed);
+                }
+                crate::visualize::CurveItem::Line(p) => {
+                    let transformed = transform_point_affine(*p, skeleton_center, cos_a, sin_a, scale_factor);
+                    result.line(transformed);
+                }
+                crate::visualize::CurveItem::Cubic(c1, c2, p) => {
+                    let transformed_c1 = transform_point_affine(*c1, skeleton_center, cos_a, sin_a, scale_factor);
+                    let transformed_c2 = transform_point_affine(*c2, skeleton_center, cos_a, sin_a, scale_factor);
+                    let transformed_p = transform_point_affine(*p, skeleton_center, cos_a, sin_a, scale_factor);
+                    result.cubic(transformed_c1, transformed_c2, transformed_p);
+                }
+                crate::visualize::CurveItem::Close => {
+                    result.close();
                 }
             }
         }
-
-        result
     }
 
-    /// Translate pattern to skeleton position without rotation or deformation.
-    fn transform_pattern_none(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        arc_table: &[(f64, f64)],
-        t_offset: f64,
-        skeleton_length: f64,
-        pattern_width: f64,
-    ) -> Curve {
-        let mut result = Curve::new();
-        let pattern_center_pos = t_offset + pattern_width / 2.0;
-
-        if pattern_center_pos < 0.0 || pattern_center_pos > skeleton_length {
-            return result;
-        }
-
-        if let Some((skeleton_center, _)) = point_and_normal_at_length(skeleton, arc_table, pattern_center_pos) {
-            for item in &pattern.0 {
-                match item {
-                    crate::visualize::CurveItem::Move(p) => {
-                        result.move_(Point::new(p.x + skeleton_center.x, p.y + skeleton_center.y));
-                    }
-                    crate::visualize::CurveItem::Line(p) => {
-                        result.line(Point::new(p.x + skeleton_center.x, p.y + skeleton_center.y));
-                    }
-                    crate::visualize::CurveItem::Cubic(c1, c2, p) => {
-                        result.cubic(
-                            Point::new(c1.x + skeleton_center.x, c1.y + skeleton_center.y),
-                            Point::new(c2.x + skeleton_center.x, c2.y + skeleton_center.y),
-                            Point::new(p.x + skeleton_center.x, p.y + skeleton_center.y),
-                        );
-                    }
-                    crate::visualize::CurveItem::Close => {
-                        result.close();
-                    }
-                }
-            }
-        }
-
-        result
-    }
+    result
 }
 
 /// Calculate pattern layout: number of copies and scale factor to fit along the skeleton.
@@ -494,27 +550,22 @@ fn transform_point_affine(
 }
 
 /// Build arc length lookup table for the curve.
-/// Returns (table, total_length) where table maps parameter t to arc length.
-fn build_arc_length_table(curve: &Curve) -> (Vec<(f64, f64)>, f64) {
+/// Returns a table that maps parameter t to arc length.
+fn build_arc_length_table(curve: &Curve, total_length: f64) -> Vec<(f64, f64)> {
     let mut table = Vec::new();
-    
-    if curve.is_empty() {
-        return (table, 0.0);
-    }
 
-    let total_length = calculate_curve_length(curve);
-    if total_length <= 0.0 {
-        return (table, 0.0);
+    if curve.is_empty() || total_length <= 0.0 {
+        return table;
     }
 
     let mut accumulated_length = 0.0;
     let mut prev_point = match get_curve_start_point(curve) {
         Some(p) => p,
-        None => return (table, 0.0),
+        None => return table,
     };
-    
+
     table.push((0.0, 0.0));
-    
+
     for i in 1..=ARC_LENGTH_TABLE_SAMPLES {
         let t = i as f64 / ARC_LENGTH_TABLE_SAMPLES as f64;
         if let Some(point) = sample_curve_at_t(curve, t, total_length) {
@@ -528,7 +579,7 @@ fn build_arc_length_table(curve: &Curve) -> (Vec<(f64, f64)>, f64) {
         *last_length = total_length;
     }
 
-    (table, total_length)
+    table
 }
 
 /// Find the curve parameter t for a given arc length using linear interpolation.
