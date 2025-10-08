@@ -413,8 +413,9 @@ dependencies = [
 
 [[package]]
 name = "codex"
-version = "0.1.1"
-source = "git+https://github.com/typst/codex?rev=775d828#775d82873c3f74ce95ec2621f8541de1b48778a7"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9589e1effc5cacbea347899645c654158b03b2053d24bb426fd3128ced6e423c"
 
 [[package]]
 name = "color-print"
@@ -992,6 +993,20 @@ dependencies = [
  "skrifa",
  "smallvec",
  "yoke 0.8.0",
+]
+
+[[package]]
+name = "hayro-svg"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8c673304cec6e0dfd3b4f71fccecd45646899aa70279b62d3f933842abc4ac5"
+dependencies = [
+ "base64",
+ "hayro-interpret",
+ "image",
+ "kurbo 0.12.0",
+ "siphasher",
+ "xmlwriter",
 ]
 
 [[package]]
@@ -2989,7 +3004,7 @@ dependencies = [
 [[package]]
 name = "typst-dev-assets"
 version = "0.13.1"
-source = "git+https://github.com/typst/typst-dev-assets?rev=11b35ff#11b35ff4cb655d46fd40ba80018c361d42e60af5"
+source = "git+https://github.com/typst/typst-dev-assets?rev=5bb5393#5bb539377906613fab7994b3601e475eee794ada"
 
 [[package]]
 name = "typst-docs"
@@ -3281,6 +3296,7 @@ dependencies = [
  "ecow",
  "flate2",
  "hayro",
+ "hayro-svg",
  "image",
  "rustc-hash",
  "ttf-parser",
