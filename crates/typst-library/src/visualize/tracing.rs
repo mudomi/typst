@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ecow::EcoString;
 use crate::foundations::{func, scope, ty, Content, Repr, cast, IntoValue, Value, Reflect, CastInfo, Type, Dict, FromValue};
-use crate::diag::{SourceResult, HintedStrResult, bail};
+use crate::diag::{SourceResult, HintedStrResult};
 use crate::layout::{Abs, Length, Point};
 use crate::visualize::Curve;
 
@@ -413,11 +413,17 @@ impl Tracing {
             spacing_abs,
         );
 
-        let pattern_step = (pattern_width * x_scale) + spacing_abs;
-        let mut t_offset = start_offset;
+        let scaled_width = pattern_width * x_scale;
+        let pattern_step = scaled_width + spacing_abs;
+
+        // Start the first pattern so its beginning aligns with start_offset
+        // Since patterns are centered, we offset by half the scaled width
+        let mut t_offset = start_offset + (scaled_width / 2.0);
 
         for _ in 0..num_copies {
-            if t_offset + pattern_width * x_scale <= end_offset {
+            // Check if this pattern's end is within bounds
+            // Pattern extends from (t_offset - scaled_width/2) to (t_offset + scaled_width/2)
+            if t_offset + (scaled_width / 2.0) <= end_offset {
                 let transformed = self.transform_pattern_for_repeat(
                     self.0.repeat_type,
                     &centered_pattern,
@@ -1003,7 +1009,7 @@ fn center_pattern(pattern: &Curve) -> Curve {
 
     let bbox = pattern.bbox_size();
     let offset = Point::new(
-        Abs::raw(-min_x),
+        Abs::raw(-min_x) - bbox.x / 2.0,
         -Abs::raw(min_y) - bbox.y / 2.0,
     );
 
