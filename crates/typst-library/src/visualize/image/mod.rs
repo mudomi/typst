@@ -87,13 +87,18 @@ pub struct ImageElem {
     /// Supported formats are `{"png"}`, `{"jpg"}`, `{"gif"}`, `{"svg"}`,
     /// `{"pdf"}`, `{"webp"}` as well as raw pixel data.
     ///
-    /// Note that PDF images are currently not supported when exporting with a
-    /// specific PDF standard, like PDF/A-3 or PDF/UA-1. In these cases, you can
-    /// instead use SVGs to embed vector images. Additionally, Typst does not
-    /// currently support PDFs that are password-protected or have any other
-    /// kind of encryption. Finally, be aware that the tags in your PDF image
-    /// will not be preserved. Instead, you must provide an [alternative
-    /// description]($image.alt) to make the image accessible.
+    /// Note that several restrictions apply when using PDF files as images:
+    ///
+    /// - When exporting to PDF, any PDF image file used must have a version
+    ///   equal to or lower than the [export target PDF
+    ///   version]($pdf/#pdf-versions).
+    /// - PDF files as images are currently not supported when exporting with a
+    ///   specific PDF standard, like PDF/A-3 or PDF/UA-1. In these cases, you
+    ///   can instead use SVGs to embed vector images.
+    /// - The image file must not be password-protected.
+    /// - Tags in your PDF image will not be preserved. Instead, you must
+    ///   provide an [alternative description]($image.alt) to make the image
+    ///   accessible.
     ///
     /// When providing raw pixel data as the `source`, you must specify a
     /// dictionary with the following keys as the `format`:
@@ -291,7 +296,7 @@ impl Packed<ImageElem> {
                     engine.sink.warn(warning!(
                         span,
                         "image contains foreign object";
-                        hint: "SVG images with foreign objects might render incorrectly in typst";
+                        hint: "SVG images with foreign objects might render incorrectly in Typst";
                         hint: "see https://github.com/typst/typst/issues/1421 for more information"
                     ));
                 }

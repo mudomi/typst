@@ -97,8 +97,6 @@ fn layout_inline_text(
             .chars()
             .flat_map(|c| to_style(c, MathStyle::select(c, variant, bold, italic)))
             .collect();
-
-        let spaced = styled_text.graphemes(true).nth(1).is_some();
         let elem = TextElem::packed(styled_text).spanned(span);
 
         // There isn't a natural width for a paragraph in a math environment;
@@ -118,7 +116,7 @@ fn layout_inline_text(
         Ok(FrameFragment::new(styles, frame)
             .with_class(MathClass::Alphabetic)
             .with_text_like(true)
-            .with_spaced(spaced))
+            .with_spaced(true))
     }
 }
 
@@ -161,7 +159,7 @@ pub fn layout_symbol(
                         .math()
                         .display_operator_min_height
                         .at(glyph.item.size);
-                    glyph.stretch_vertical(ctx, height);
+                    glyph.stretch_vertical(ctx, height, Abs::zero());
                 };
                 // TeXbook p 155. Large operators are always vertically centered on
                 // the axis.

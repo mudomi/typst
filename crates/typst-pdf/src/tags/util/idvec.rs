@@ -1,7 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::tags::GroupId;
-
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct IdVec<T> {
     inner: Vec<T>,
@@ -12,15 +10,13 @@ impl<T> IdVec<T> {
         Self { inner: Vec::new() }
     }
 
-    pub fn push(&mut self, val: T) -> Id<T> {
-        let id = Id::new(self.inner.len() as u32);
-        self.inner.push(val);
-        id
+    pub fn next_id(&self) -> Id<T> {
+        Id::new(self.inner.len() as u32)
     }
 
-    pub fn push_with(&mut self, val_fn: impl FnOnce(Id<T>) -> T) -> Id<T> {
-        let id = Id::new(self.inner.len() as u32);
-        self.inner.push(val_fn(id));
+    pub fn push(&mut self, val: T) -> Id<T> {
+        let id = self.next_id();
+        self.inner.push(val);
         id
     }
 
@@ -34,20 +30,19 @@ impl<T> IdVec<T> {
         &mut self.inner[id.idx()]
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
+    #[allow(unused)]
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
         self.inner.iter()
     }
 
-    pub fn iter_mut(
-        &mut self,
-    ) -> impl ExactSizeIterator<Item = &mut T> + DoubleEndedIterator {
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
         self.inner.iter_mut()
     }
 
     pub fn ids(
         &self,
-    ) -> impl ExactSizeIterator<Item = GroupId> + DoubleEndedIterator + use<T> {
-        (0..self.inner.len()).map(|i| GroupId::new(i as u32))
+    ) -> impl ExactSizeIterator<Item = Id<T>> + DoubleEndedIterator + use<T> {
+        (0..self.inner.len()).map(|i| Id::new(i as u32))
     }
 }
 

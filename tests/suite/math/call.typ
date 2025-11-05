@@ -80,7 +80,7 @@ $args(..(a + b))$
 
 --- math-call-spread-multiple-exprs ---
 #let args(..body) = body
-// Error: 10 expected comma or semicolon
+// Error: 7-14 cannot spread content
 $args(..a + b)$
 
 --- math-call-spread-unexpected-dots ---
@@ -88,17 +88,29 @@ $args(..a + b)$
 // Error: 8-10 unexpected dots
 $args(#..range(1, 5).chunks(2))$
 
+--- math-call-spread-unexpected-binary ---
+// Test spread operators followed by binary math operators with and without
+// right operands. These errors aren't great, but they can be silenced with a
+// space and no one would actually write this.
+$
+  // Error: 9-10 unexpected slash
+  // Error: 19-20 unexpected hat
+  // Error: 29-30 unexpected underscore
+  vec(../.) vec(..^.) vec(.._.)
+  // Error: 9-10 unexpected slash
+  // Error: 19-20 unexpected hat
+  // Error: 29-30 unexpected underscore
+  vec(../)  vec(..^)  vec(.._)
+$
+
 --- math-call-spread-shorthand-clash ---
 #let func(body) = body
 $func(...)$
 
 --- math-call-spread-empty ---
 // Test that a spread operator followed by nothing generates two dots.
-// TODO: This currently errors in parsing, but it should change to the given repr.
 #let args(..body) = body
-// Error: 17-18 unclosed delimiter
-// Error: 21 expected comma or semicolon
-// Error: 25 expected comma or semicolon
+#test-repr($args(..)$.body.text, "arguments(sequence([.], [.]))")
 #test-repr($args(.., ..; .. , ..)$.body.text, "arguments(\n  (sequence([.], [.]), sequence([.], [.])),\n  (sequence([.], [.]), sequence([.], [.])),\n)")
 
 --- math-call-named-spread-override ---

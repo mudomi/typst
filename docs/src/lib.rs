@@ -46,6 +46,12 @@ static GROUPS: LazyLock<Vec<GroupData>> = LazyLock::new(|| {
                 .map(|(k, _)| k.clone())
                 .collect();
         }
+        if group.name == "typed" {
+            group.filter = typst_assets::html::ELEMS
+                .iter()
+                .map(|elem| elem.name.into())
+                .collect();
+        }
     }
     groups
 });
@@ -213,6 +219,7 @@ fn changelog_pages(resolver: &dyn Resolver) -> PageModel {
     let mut page = md_page(resolver, resolver.base(), load!("changelog/welcome.md"));
     let base = format!("{}changelog/", resolver.base());
     page.children = vec![
+        md_page(resolver, &base, load!("changelog/0.14.0.md")),
         md_page(resolver, &base, load!("changelog/0.13.1.md")),
         md_page(resolver, &base, load!("changelog/0.13.0.md")),
         md_page(resolver, &base, load!("changelog/0.12.0.md")),
@@ -286,15 +293,14 @@ fn category_page(resolver: &dyn Resolver, category: Category) -> PageModel {
         shorthands = Some(ShorthandsModel { markup, math });
     }
 
-    let mut skip = FxHashSet::default();
-    if category == Category::Math {
-        skip = GROUPS
-            .iter()
-            .filter(|g| g.category == category)
-            .flat_map(|g| &g.filter)
-            .map(|s| s.as_str())
-            .collect();
+    let mut skip: FxHashSet<&str> = GROUPS
+        .iter()
+        .filter(|g| g.category == category)
+        .flat_map(|g| &g.filter)
+        .map(|s| s.as_str())
+        .collect();
 
+    if category == Category::Math {
         // Already documented in the text category.
         skip.insert("text");
     }
@@ -467,6 +473,11 @@ fn func_model(
     }) else {
         panic!("function lacks any details")
     };
+
+    let mut params = params.to_vec();
+    if func.keywords().contains(&"typed-html") {
+        params.retain(|param| !is_global_html_attr(param.name));
+    }
 
     FuncModel {
         path: path.iter().copied().map(Into::into).collect(),
@@ -735,6 +746,35 @@ fn group_page(
         children: outline_items,
     });
 
+    let global_attributes = if group.name == "typed" {
+        let div = group.module().scope().get("div").unwrap();
+        let func = div.read().clone().cast::<Func>().unwrap();
+        func.params()
+            .unwrap()
+            .iter()
+            .filter(|param| is_global_html_attr(param.name))
+            .map(|info| param_model(resolver, info))
+            .collect()
+    } else {
+        vec![]
+    };
+
+    if !global_attributes.is_empty() {
+        let id = "global-attributes";
+        outline.push(OutlineItem {
+            id: id.into(),
+            name: "Global Attributes".into(),
+            children: global_attributes
+                .iter()
+                .map(|param| OutlineItem {
+                    id: eco_format!("{id}-{}", urlify(param.name)),
+                    name: param.name.into(),
+                    children: vec![],
+                })
+                .collect(),
+        });
+    }
+
     let model = PageModel {
         route: eco_format!("{parent}{}/", group.name),
         title: group.title.clone(),
@@ -746,6 +786,7 @@ fn group_page(
             title: group.title.clone(),
             details,
             functions,
+            global_attributes,
         }),
         children: vec![],
     };
@@ -758,6 +799,15 @@ fn group_page(
     };
 
     (model, item)
+}
+
+/// Whether the given `name` is one of a global HTML attribute (shared by all
+/// elements).
+fn is_global_html_attr(name: &str) -> bool {
+    use typst_assets::html as data;
+    data::ATTRS[..data::ATTRS_GLOBAL]
+        .iter()
+        .any(|global| global.name == name)
 }
 
 /// Create a page for a type.

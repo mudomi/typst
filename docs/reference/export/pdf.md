@@ -15,7 +15,7 @@ you have the following configuration options:
 - Which [PDF standards](#pdf-standards) Typst should enforce conformance with by
   specifying `--pdf-standard` followed by one or multiple comma-separated
   standards. Valid standards are `1.4`, `1.5`, `1.6`, `1.7`, `2.0`, `a-1b`,
-  `a-1a`, `a-2b`, `a-2u`, `a-2a`, `a-3b`. `a-3u`, `a-3a`, `a-4`, `a-4f`, `a-4e`,
+  `a-1a`, `a-2b`, `a-2u`, `a-2a`, `a-3b`, `a-3u`, `a-3a`, `a-4`, `a-4f`, `a-4e`,
   and `ua-1`. By default, Typst outputs PDF-1.7-compliant files.
 
 - You can disable PDF tagging completely with `--no-pdf-tags`. By default, Typst
@@ -48,8 +48,34 @@ The International Standards Organization (ISO) has published the base PDF
 standard and various standards that extend it to make PDFs more suitable for
 specific use-cases. By default, Typst exports PDF 1.7 files. Adobe Acrobat 8 and
 later as well as all other commonly used PDF viewers are compatible with this
-PDF version. Some features of Typst may not be available depending on the PDF
-standard you choose.
+PDF version.
+
+Some features of Typst may not be available depending on the PDF standard you
+choose. You currently cannot choose both PDF/A and PDF/UA at the same time.
+
+## PDF versions
+Typst supports five different PDF versions: 1.4, 1.5, 1.6, 1.7 (default), and
+2.0. You can choose each of these versions for your document export. However,
+based on the features you used there may be a minimum version. Likewise, the
+standards you target can limit which versions you can choose (see below for
+more).
+
+Here is a list on how each new version improves over PDF 1.4 for Typst
+documents:
+
+- **PDF 1.5** (2003): Improved color management, text extraction, table
+  accessibility, reflow, and emoji fonts
+- **PDF 1.6** (2004): More flexible links
+- **PDF 1.7** (2006): Allows [attachments]($pdf.attach), improved reflow
+- **PDF 2.0** (2017): Improved both metadata and tag semantics for accessibility
+
+The software used to read your file must support your PDF version. Under normal
+circumstances, this poses no problem, but it can be a source of errors when
+working with older hardware. For general exchange, we recommend keeping the
+default PDF 1.7 setting or choosing PDF 2.0.
+
+When using PDF files as [images]($image) in your document, the export PDF
+version must equal or exceed the image file versions.
 
 ## PDF/UA
 Typst supports writing PDF/UA-conformant files. PDF/UA files are designed
@@ -125,7 +151,7 @@ PDF/A output profiles:
   automatically adds tags to help you reach this conformance level. Also pay
   attention to the Accessibility Sections throughout the reference and the
   [Accessibility Guide]($guides/accessibility) when targeting this conformance
-  level. Finally, PDF/A2-a forbids you from using code points in the [Unicode
+  level. Finally, PDF/A-2a forbids you from using code points in the [Unicode
   Private Use area](https://en.wikipedia.org/wiki/Private_Use_Areas). If you
   want to build an accessible file, also consider additionally targeting
   PDF/UA-1, which enables more automatic accessibility checks.
@@ -160,7 +186,7 @@ PDF/A output profiles:
 
 - **PDF/A-4e:** The _engineering_ conformance level that builds on the embedded
   files level A-4f. Files conforming to this level can contain 3D objects. Typst
-  does not support 3D content, so this is functionally equivalent to PDF/A4-f
+  does not support 3D content, so this is functionally equivalent to PDF/A-4f
   from a Typst perspective.
 
 If you want to target PDF/A but are unsure about which particular setting to
@@ -178,7 +204,7 @@ questions:
 3. **Does your file need to use features introduced in PDF 2.0?** Currently, use
    of PDF 2.0 features in Typst is limited to minor improvements in
    accessibility, e.g. for the [title element]($title). If you can do without
-   these improvements, maximize compatibilty by choosing part two (when you
+   these improvements, maximize compatibility by choosing part two (when you
    don't need attachments) or part three (when you do need attachments). If you
    rely on PDF 2.0 features, use part four.
 

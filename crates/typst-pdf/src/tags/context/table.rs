@@ -24,6 +24,7 @@ use crate::util::{AbsExt, SidesExt};
 
 #[derive(Debug)]
 pub struct TableCtx {
+    pub group_id: GroupId,
     pub table_id: TableId,
     pub elem: Packed<TableElem>,
     row_kinds: Vec<TableCellKind>,
@@ -54,7 +55,7 @@ pub enum StrokePriority {
 }
 
 impl TableCtx {
-    pub fn new(table_id: TableId, table: Packed<TableElem>) -> Self {
+    pub fn new(group_id: GroupId, table_id: TableId, table: Packed<TableElem>) -> Self {
         let grid = table.grid.as_ref().unwrap();
         let width = grid.non_gutter_column_count();
         let height = grid.non_gutter_row_count();
@@ -84,6 +85,7 @@ impl TableCtx {
             .collect::<Vec<_>>();
 
         Self {
+            group_id,
             table_id,
             elem: table,
             row_kinds: default_row_kinds,
@@ -133,15 +135,20 @@ impl TableCtx {
     }
 }
 
-pub fn build_table(tree: &mut Tree, table_id: TableId, table: GroupId) {
+pub fn build_table(tree: &mut Tree, table_id: TableId) {
     let table_ctx = tree.ctx.tables.get_mut(table_id);
 
     // Table layouting ensures that there are no overlapping cells, and that
     // any gaps left by the user are filled with empty cells.
-    // A show rule, can prevent the table from being laid out, in which case
-    // all cells will be missing, in that case just return whatever contents
-    // that were generated in the show rule.
-    if table_ctx.cells.iter().all(GridEntry::is_missing) {
+    // A show rule, can prevent the table from being properly laid out, in which
+    // case cells will be missing.
+    if table_ctx.cells.is_empty() || table_ctx.cells.iter().any(GridEntry::is_missing) {
+        // Insert all children, so the content is included in the tag tree,
+        // otherwise krilla might panic.
+        for cell in table_ctx.cells.iter().filter_map(GridEntry::as_cell) {
+            tree.groups.push_group(table_ctx.group_id, cell.id);
+        }
+
         return;
     }
 
@@ -155,6 +162,7 @@ pub fn build_table(tree: &mut Tree, table_id: TableId, table: GroupId) {
     let gen_row_groups = {
         let mut uniform_rows = true;
         let mut has_header_or_footer = false;
+        let mut has_body = false;
         'outer: for (row, row_kind) in
             table_ctx.cells.rows().zip(table_ctx.row_kinds.iter_mut())
         {
@@ -180,9 +188,10 @@ pub fn build_table(tree: &mut Tree, table_id: TableId, table: GroupId) {
             *row_kind = first_kind;
 
             has_header_or_footer |= *row_kind != TableCellKind::Data;
+            has_body |= *row_kind == TableCellKind::Data;
         }
 
-        uniform_rows && has_header_or_footer
+        uniform_rows && has_header_or_footer && has_body
     };
 
     // Compute the headers attribute column-wise.
@@ -282,18 +291,21 @@ pub fn build_table(tree: &mut Tree, table_id: TableId, table: GroupId) {
     for (row, y) in table_ctx.cells.rows_mut().zip(0..) {
         let parent = if gen_row_groups {
             let row_kind = table_ctx.row_kinds[y as usize];
-            if chunk_id == GroupId::INVALID || !should_group_rows(chunk_kind, row_kind) {
+            let is_first = chunk_id == GroupId::INVALID;
+            if is_first || !should_group_rows(chunk_kind, row_kind) {
                 let tag: TagKind = match row_kind {
-                    TableCellKind::Header(..) => Tag::THead.into(),
+                    // Only one `THead` group at the start of the table is permitted.
+                    TableCellKind::Header(..) if is_first => Tag::THead.into(),
+                    TableCellKind::Header(..) => Tag::TBody.into(),
                     TableCellKind::Footer => Tag::TFoot.into(),
                     TableCellKind::Data => Tag::TBody.into(),
                 };
                 chunk_kind = row_kind;
-                chunk_id = tree.groups.push_tag(table, tag);
+                chunk_id = tree.groups.push_tag(table_ctx.group_id, tag);
             }
             chunk_id
         } else {
-            table
+            table_ctx.group_id
         };
 
         let row_id = tree.groups.push_tag(parent, Tag::TR);
@@ -337,7 +349,7 @@ pub fn build_table(tree: &mut Tree, table_id: TableId, table: GroupId) {
             })
             .collect::<Vec<_>>();
 
-        tree.groups.extend_groups(row_id, row_nodes.into_iter());
+        tree.groups.push_groups(row_id, &row_nodes);
     }
 }
 
