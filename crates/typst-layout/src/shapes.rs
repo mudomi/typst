@@ -1549,6 +1549,14 @@ fn apply_tracing(
         .map(|c| c.bbox_size().x.to_raw())
         .unwrap_or(0.0);
 
+    // Build arc length table once for all pattern applications (performance optimization)
+    let arc_table = tracing.build_skeleton_arc_table(skeleton, skeleton_length);
+
+    // Center patterns once (performance optimization)
+    let centered_start = start_curve.as_ref().map(|c| tracing.center_pattern_curve(c));
+    let centered_repeat = repeat_curve.as_ref().map(|c| tracing.center_pattern_curve(c));
+    let centered_end = end_curve.as_ref().map(|c| tracing.center_pattern_curve(c));
+
     // Calculate section boundaries
     let mut result_curve = Curve::new();
     let mut repeat_start = 0.0;
@@ -1563,6 +1571,8 @@ fn apply_tracing(
             skeleton_length,
             start_offset,
             true,
+            Some(&arc_table),
+            centered_start.as_ref(),
         );
         result_curve.0.extend(start_result.0.iter().cloned());
         repeat_start = start_width + spacing_abs;
@@ -1583,6 +1593,8 @@ fn apply_tracing(
                 skeleton_length,
                 repeat_start,
                 repeat_end,
+                Some(&arc_table),
+                centered_repeat.as_ref(),
             );
             result_curve.0.extend(repeat_result.0.iter().cloned());
         }
@@ -1597,6 +1609,8 @@ fn apply_tracing(
             skeleton_length,
             end_offset,
             true,
+            Some(&arc_table),
+            centered_end.as_ref(),
         );
         result_curve.0.extend(end_result.0.iter().cloned());
     }

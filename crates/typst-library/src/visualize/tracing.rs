@@ -1,151 +1,28 @@
 use std::sync::Arc;
 
 use ecow::EcoString;
-use crate::foundations::{func, scope, ty, Content, Repr, cast, IntoValue, Value, Reflect, CastInfo, Type, Dict, FromValue};
-use crate::diag::{SourceResult, HintedStrResult};
+use kurbo::{Affine, CubicBez, ParamCurve, ParamCurveArclen};
+use typst_syntax::Span;
+
+use crate::diag::{At, SourceResult, HintedStrResult};
+use crate::foundations::{
+    cast, func, scope, ty, CastInfo, Content, Dict, FromValue, IntoValue, Reflect, Repr, Type, Value,
+};
 use crate::layout::{Abs, Length, Point};
 use crate::visualize::Curve;
 
-const PATTERN_SAMPLE_COUNT: usize = 100;
-const ARC_LENGTH_TABLE_SAMPLES: usize = 200;
+const BASE_SAMPLE_COUNT: usize = 10;
+const SAMPLES_PER_SEGMENT: usize = 5;
+const MAX_SAMPLE_COUNT: usize = 200;
+
 const TANGENT_DELTA: f64 = 0.001;
 const BEZIER_TOLERANCE: f64 = 0.01;
-const BEZIER_MAX_DEPTH: u32 = 8;
 const MIN_SCALE_FACTOR: f64 = 0.1;
-const BOUNDARY_EPSILON: f64 = 0.001;
+const RELATIVE_EPSILON: f64 = 1e-6;
 
-/// Trait for pattern transformation strategies.
-trait PatternTransformer {
-    fn transform(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        arc_table: &[(f64, f64)],
-        t_offset: f64,
-        x_scale: f64,
-        skeleton_length: f64,
-        pattern_width: f64,
-    ) -> Curve;
-}
-
-/// Transformation for None repeat type: simple translation.
-struct NoneTransformer;
-
-impl PatternTransformer for NoneTransformer {
-    fn transform(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        arc_table: &[(f64, f64)],
-        t_offset: f64,
-        _x_scale: f64,
-        skeleton_length: f64,
-        _pattern_width: f64,
-    ) -> Curve {
-        let mut result = Curve::new();
-        let pattern_center_pos = t_offset;
-
-        if pattern_center_pos < 0.0 || pattern_center_pos > skeleton_length {
-            return result;
-        }
-
-        if let Some((skeleton_center, _)) = point_and_normal_at_length(skeleton, arc_table, pattern_center_pos) {
-            for item in &pattern.0 {
-                match item {
-                    crate::visualize::CurveItem::Move(p) => {
-                        result.move_(Point::new(p.x + skeleton_center.x, p.y + skeleton_center.y));
-                    }
-                    crate::visualize::CurveItem::Line(p) => {
-                        result.line(Point::new(p.x + skeleton_center.x, p.y + skeleton_center.y));
-                    }
-                    crate::visualize::CurveItem::Cubic(c1, c2, p) => {
-                        result.cubic(
-                            Point::new(c1.x + skeleton_center.x, c1.y + skeleton_center.y),
-                            Point::new(c2.x + skeleton_center.x, c2.y + skeleton_center.y),
-                            Point::new(p.x + skeleton_center.x, p.y + skeleton_center.y),
-                        );
-                    }
-                    crate::visualize::CurveItem::Close => {
-                        result.close();
-                    }
-                }
-            }
-        }
-
-        result
-    }
-}
-
-/// Transformation for Rotate repeat type: rotation without deformation.
-struct RotateTransformer;
-
-impl PatternTransformer for RotateTransformer {
-    fn transform(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        arc_table: &[(f64, f64)],
-        t_offset: f64,
-        _x_scale: f64,
-        skeleton_length: f64,
-        pattern_width: f64,
-    ) -> Curve {
-        transform_pattern_affine(pattern, skeleton, arc_table, t_offset, None, skeleton_length, pattern_width)
-    }
-}
-
-/// Transformation for Scale repeat type: uniform deformation in both axes.
-struct ScaleTransformer;
-
-impl PatternTransformer for ScaleTransformer {
-    fn transform(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        arc_table: &[(f64, f64)],
-        t_offset: f64,
-        x_scale: f64,
-        skeleton_length: f64,
-        _pattern_width: f64,
-    ) -> Curve {
-        deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, x_scale, x_scale, skeleton_length)
-    }
-}
-
-/// Transformation for Preserve repeat type: deformation without scaling.
-struct PreserveTransformer;
-
-impl PatternTransformer for PreserveTransformer {
-    fn transform(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        arc_table: &[(f64, f64)],
-        t_offset: f64,
-        _x_scale: f64,
-        skeleton_length: f64,
-        _pattern_width: f64,
-    ) -> Curve {
-        deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, 1.0, 1.0, skeleton_length)
-    }
-}
-
-/// Transformation for Stretch repeat type: horizontal deformation only.
-struct StretchTransformer;
-
-impl PatternTransformer for StretchTransformer {
-    fn transform(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        arc_table: &[(f64, f64)],
-        t_offset: f64,
-        x_scale: f64,
-        skeleton_length: f64,
-        _pattern_width: f64,
-    ) -> Curve {
-        deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, x_scale, 1.0, skeleton_length)
-    }
+fn adaptive_sample_count(curve: &Curve) -> usize {
+    let segment_count = curve.0.len();
+    (BASE_SAMPLE_COUNT + segment_count * SAMPLES_PER_SEGMENT).min(MAX_SAMPLE_COUNT)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -169,29 +46,22 @@ impl Default for RepeatType {
 }
 
 /// Pattern specification with optional start, repeat, and end curves.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct PatternSpec {
     pub start: Option<Content>,
     pub repeat: Option<Content>,
     pub end: Option<Content>,
 }
 
+impl Eq for PatternSpec {}
+
 impl PatternSpec {
-    /// Create a pattern spec with just a repeat pattern (for backward compatibility).
     pub fn from_repeat(content: Content) -> Self {
         Self {
             start: None,
             repeat: Some(content),
             end: None,
         }
-    }
-}
-
-impl std::hash::Hash for PatternSpec {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.start.hash(state);
-        self.repeat.hash(state);
-        self.end.hash(state);
     }
 }
 
@@ -216,30 +86,11 @@ impl std::hash::Hash for PatternSpec {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Tracing(Arc<TracingRepr>);
 
-/// Internal representation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TracingRepr {
     pattern: PatternSpec,
     repeat_type: RepeatType,
     spacing: Length,
-}
-
-impl PartialEq for TracingRepr {
-    fn eq(&self, other: &Self) -> bool {
-        self.pattern == other.pattern
-            && self.repeat_type == other.repeat_type
-            && self.spacing == other.spacing
-    }
-}
-
-impl Eq for TracingRepr {}
-
-impl std::hash::Hash for TracingRepr {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.pattern.hash(state);
-        self.repeat_type.hash(state);
-        self.spacing.hash(state);
-    }
 }
 
 impl Reflect for Tracing {
@@ -316,47 +167,22 @@ impl Tracing {
         #[named]
         spacing: Option<Length>,
     ) -> SourceResult<Tracing> {
-        // Try to parse the pattern as a PatternSpec (either simple or dictionary form)
         let pattern = if let Ok(content) = pattern_arg.clone().cast::<Content>() {
-            // Simple form: just a curve
             PatternSpec::from_repeat(content)
         } else if let Ok(mut dict) = pattern_arg.cast::<Dict>() {
-            // Dictionary form with start/repeat/end
-            let start = dict.take("start").ok()
-                .map(|v| v.cast::<Content>().ok())
-                .flatten();
-
-            let repeat_content = dict.take("repeat").ok()
-                .map(|v| v.cast::<Content>().ok())
-                .flatten();
-
-            let end = dict.take("end").ok()
-                .map(|v| v.cast::<Content>().ok())
-                .flatten();
-
-            let _ = dict.finish(&["start", "repeat", "end"]);
-
-            PatternSpec {
-                start,
-                repeat: repeat_content,
-                end,
-            }
+            let start = dict.take("start").ok().and_then(|v| v.cast().ok());
+            let repeat = dict.take("repeat").ok().and_then(|v| v.cast().ok());
+            let end = dict.take("end").ok().and_then(|v| v.cast().ok());
+            dict.finish(&["start", "repeat", "end"]).at(Span::detached())?;
+            PatternSpec { start, repeat, end }
         } else {
-            // Fall back to empty pattern spec (will be caught later if invalid)
-            PatternSpec {
-                start: None,
-                repeat: None,
-                end: None,
-            }
+            PatternSpec { start: None, repeat: None, end: None }
         };
-
-        let repeat_type = repeat.unwrap_or(RepeatType::Scale);
-        let spacing_val = spacing.unwrap_or(Length::zero());
 
         Ok(Self(Arc::new(TracingRepr {
             pattern,
-            repeat_type,
-            spacing: spacing_val,
+            repeat_type: repeat.unwrap_or_default(),
+            spacing: spacing.unwrap_or_default(),
         })))
     }
 }
@@ -370,17 +196,22 @@ impl Tracing {
         (self.0.repeat_type, self.0.spacing)
     }
 
-    pub fn apply_tracing_algorithm(
-        &self,
-        pattern: &Curve,
-        skeleton: &Curve,
-        spacing_abs: f64,
-        skeleton_length: f64,
-    ) -> Curve {
-        self.apply_tracing_in_range(pattern, skeleton, spacing_abs, skeleton_length, 0.0, skeleton_length)
+    /// Build arc length lookup table for a skeleton curve.
+    /// This can be cached and reused across multiple pattern applications.
+    pub fn build_skeleton_arc_table(&self, skeleton: &Curve, skeleton_length: f64) -> Vec<(f64, f64)> {
+        build_arc_length_table(skeleton, skeleton_length)
+    }
+
+    /// Center a pattern curve so its bounding box is centered on the origin.
+    /// This can be cached and reused across multiple applications.
+    pub fn center_pattern_curve(&self, pattern: &Curve) -> Curve {
+        center_pattern(pattern)
     }
 
     /// Apply a pattern along a skeleton in a specific range.
+    ///
+    /// Optionally accepts pre-computed `arc_table` and `centered_pattern` for better
+    /// performance when calling multiple times with the same skeleton/pattern.
     pub fn apply_tracing_in_range(
         &self,
         pattern: &Curve,
@@ -389,18 +220,27 @@ impl Tracing {
         skeleton_length: f64,
         start_offset: f64,
         end_offset: f64,
+        arc_table: Option<&[(f64, f64)]>,
+        centered_pattern: Option<&Curve>,
     ) -> Curve {
         let mut result = Curve::new();
 
-        let centered_pattern = center_pattern(pattern);
-        let pattern_bbox_size = centered_pattern.bbox_size();
+        let centered = centered_pattern.cloned().unwrap_or_else(|| center_pattern(pattern));
+        let pattern_bbox_size = centered.bbox_size();
         let pattern_width = pattern_bbox_size.x.to_raw();
 
         if pattern_width <= 0.0 || skeleton_length <= 0.0 {
             return result;
         }
 
-        let arc_table = build_arc_length_table(skeleton, skeleton_length);
+        let scratch;
+        let table = if let Some(table) = arc_table {
+            table
+        } else {
+            scratch = build_arc_length_table(skeleton, skeleton_length);
+            &scratch
+        };
+
         let available_length = end_offset - start_offset;
 
         if available_length <= 0.0 {
@@ -419,19 +259,18 @@ impl Tracing {
 
         let mut t_offset = start_offset + (scaled_width / 2.0);
 
+        let boundary_epsilon = skeleton_length * RELATIVE_EPSILON;
+
         for _ in 0..num_copies {
-            // Check if this pattern's end is within bounds (with small epsilon for floating-point tolerance)
-            // Pattern extends from (t_offset - scaled_width/2) to (t_offset + scaled_width/2)
-            if t_offset + (scaled_width / 2.0) <= end_offset + BOUNDARY_EPSILON {
+            if t_offset + (scaled_width / 2.0) <= end_offset + boundary_epsilon {
                 let transformed = self.transform_pattern_for_repeat(
                     self.0.repeat_type,
-                    &centered_pattern,
+                    &centered,
                     skeleton,
-                    &arc_table,
+                    table,
                     t_offset,
                     x_scale,
                     skeleton_length,
-                    pattern_width,
                 );
 
                 result.0.extend(transformed.0.iter().cloned());
@@ -443,6 +282,9 @@ impl Tracing {
     }
 
     /// Apply a pattern once at a specific position.
+    ///
+    /// Optionally accepts pre-computed `arc_table` and `centered_pattern` for better
+    /// performance when calling multiple times with the same skeleton/pattern.
     pub fn apply_pattern_once(
         &self,
         pattern: &Curve,
@@ -450,18 +292,26 @@ impl Tracing {
         skeleton_length: f64,
         offset: f64,
         force_preserve: bool,
+        arc_table: Option<&[(f64, f64)]>,
+        centered_pattern: Option<&Curve>,
     ) -> Curve {
         let mut result = Curve::new();
 
-        let centered_pattern = center_pattern(pattern);
-        let pattern_bbox_size = centered_pattern.bbox_size();
+        let centered = centered_pattern.cloned().unwrap_or_else(|| center_pattern(pattern));
+        let pattern_bbox_size = centered.bbox_size();
         let pattern_width = pattern_bbox_size.x.to_raw();
 
         if pattern_width <= 0.0 || skeleton_length <= 0.0 {
             return result;
         }
 
-        let arc_table = build_arc_length_table(skeleton, skeleton_length);
+        let scratch;
+        let table = if let Some(table) = arc_table {
+            table
+        } else {
+            scratch = build_arc_length_table(skeleton, skeleton_length);
+            &scratch
+        };
 
         let repeat_type = if force_preserve {
             RepeatType::Preserve
@@ -471,13 +321,12 @@ impl Tracing {
 
         let transformed = self.transform_pattern_for_repeat(
             repeat_type,
-            &centered_pattern,
+            &centered,
             skeleton,
-            &arc_table,
+            table,
             offset,
             1.0, // No scaling for start/end
             skeleton_length,
-            pattern_width,
         );
 
         result.0.extend(transformed.0.iter().cloned());
@@ -493,25 +342,24 @@ impl Tracing {
         t_offset: f64,
         x_scale: f64,
         skeleton_length: f64,
-        pattern_width: f64,
     ) -> Curve {
-        let transformer: &dyn PatternTransformer = match repeat {
-            RepeatType::None => &NoneTransformer,
-            RepeatType::Rotate => &RotateTransformer,
-            RepeatType::Scale => &ScaleTransformer,
-            RepeatType::Preserve => &PreserveTransformer,
-            RepeatType::Stretch => &StretchTransformer,
-        };
-
-        transformer.transform(
-            pattern,
-            skeleton,
-            arc_table,
-            t_offset,
-            x_scale,
-            skeleton_length,
-            pattern_width,
-        )
+        match repeat {
+            RepeatType::None => {
+                transform_pattern_affine(pattern, skeleton, arc_table, t_offset, None, skeleton_length, false)
+            }
+            RepeatType::Rotate => {
+                transform_pattern_affine(pattern, skeleton, arc_table, t_offset, None, skeleton_length, true)
+            }
+            RepeatType::Scale => {
+                deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, x_scale, x_scale, skeleton_length)
+            }
+            RepeatType::Preserve => {
+                deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, 1.0, 1.0, skeleton_length)
+            }
+            RepeatType::Stretch => {
+                deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, x_scale, 1.0, skeleton_length)
+            }
+        }
     }
 
 }
@@ -527,11 +375,14 @@ fn deform_pattern_along_skeleton(
     skeleton_length: f64,
 ) -> Curve {
     let mut result = Curve::new();
-    let pattern_samples = sample_pattern_parametrically(pattern, PATTERN_SAMPLE_COUNT);
+    let sample_count = adaptive_sample_count(pattern);
+    let pattern_samples = sample_pattern_parametrically(pattern, sample_count);
 
     if pattern_samples.is_empty() {
         return result;
     }
+
+    let is_closed = pattern.0.iter().any(|item| matches!(item, crate::visualize::CurveItem::Close));
 
     let mut is_first_point = true;
 
@@ -557,6 +408,10 @@ fn deform_pattern_along_skeleton(
         }
     }
 
+    if is_closed && !is_first_point {
+        result.close();
+    }
+
     result
 }
 
@@ -568,42 +423,40 @@ fn transform_pattern_affine(
     t_offset: f64,
     scale_factor: Option<f64>,
     skeleton_length: f64,
-    _pattern_width: f64,
+    apply_rotation: bool,
 ) -> Curve {
     let mut result = Curve::new();
 
-
-    let pattern_center_pos = t_offset;
-
-    if pattern_center_pos < 0.0 || pattern_center_pos > skeleton_length {
+    if t_offset < 0.0 || t_offset > skeleton_length {
         return result;
     }
 
-    if let Some((skeleton_center, skeleton_normal)) = point_and_normal_at_length(skeleton, arc_table, pattern_center_pos) {
-        let skeleton_tangent = Point::new(skeleton_normal.y, -skeleton_normal.x);
-        let angle = skeleton_tangent.y.to_raw().atan2(skeleton_tangent.x.to_raw());
-        let cos_a = angle.cos();
-        let sin_a = angle.sin();
+    if let Some((skeleton_center, skeleton_normal)) = point_and_normal_at_length(skeleton, arc_table, t_offset) {
+        let mut transform = Affine::translate((skeleton_center.x.to_raw(), skeleton_center.y.to_raw()));
+
+        if apply_rotation {
+            let skeleton_tangent = Point::new(skeleton_normal.y, -skeleton_normal.x);
+            let angle = skeleton_tangent.y.to_raw().atan2(skeleton_tangent.x.to_raw());
+            transform *= Affine::rotate(angle);
+        }
+
+        if let Some(scale) = scale_factor {
+            transform *= Affine::scale(scale);
+        }
+
+        let apply = |p: Point| {
+            let transformed = transform * kurbo::Point::new(p.x.to_raw(), p.y.to_raw());
+            Point::new(Abs::raw(transformed.x), Abs::raw(transformed.y))
+        };
 
         for item in &pattern.0 {
             match item {
-                crate::visualize::CurveItem::Move(p) => {
-                    let transformed = transform_point_affine(*p, skeleton_center, cos_a, sin_a, scale_factor);
-                    result.move_(transformed);
-                }
-                crate::visualize::CurveItem::Line(p) => {
-                    let transformed = transform_point_affine(*p, skeleton_center, cos_a, sin_a, scale_factor);
-                    result.line(transformed);
-                }
+                crate::visualize::CurveItem::Move(p) => result.move_(apply(*p)),
+                crate::visualize::CurveItem::Line(p) => result.line(apply(*p)),
                 crate::visualize::CurveItem::Cubic(c1, c2, p) => {
-                    let transformed_c1 = transform_point_affine(*c1, skeleton_center, cos_a, sin_a, scale_factor);
-                    let transformed_c2 = transform_point_affine(*c2, skeleton_center, cos_a, sin_a, scale_factor);
-                    let transformed_p = transform_point_affine(*p, skeleton_center, cos_a, sin_a, scale_factor);
-                    result.cubic(transformed_c1, transformed_c2, transformed_p);
+                    result.cubic(apply(*c1), apply(*c2), apply(*p));
                 }
-                crate::visualize::CurveItem::Close => {
-                    result.close();
-                }
+                crate::visualize::CurveItem::Close => result.close(),
             }
         }
     }
@@ -640,38 +493,15 @@ fn calculate_pattern_layout(
     (num_copies, x_scale)
 }
 
-/// Apply rotation and optional uniform scaling around a center point.
-fn transform_point_affine(
-    point: Point,
-    final_center: Point,
-    cos_a: f64,
-    sin_a: f64,
-    scale_factor: Option<f64>,
-) -> Point {
-    let mut x = point.x.to_raw();
-    let mut y = point.y.to_raw();
-
-    if let Some(scale) = scale_factor {
-        x *= scale;
-        y *= scale;
-    }
-
-    let rotated_x = x * cos_a - y * sin_a;
-    let rotated_y = x * sin_a + y * cos_a;
-    Point::new(
-        final_center.x + Abs::raw(rotated_x),
-        final_center.y + Abs::raw(rotated_y),
-    )
-}
-
 /// Build arc length lookup table for the curve.
 /// Returns a table that maps parameter t to arc length.
 fn build_arc_length_table(curve: &Curve, total_length: f64) -> Vec<(f64, f64)> {
-    let mut table = Vec::new();
-
     if curve.is_empty() || total_length <= 0.0 {
-        return table;
+        return Vec::new();
     }
+
+    let sample_count = adaptive_sample_count(curve);
+    let mut table = Vec::with_capacity(sample_count + 1);
 
     let mut accumulated_length = 0.0;
     let mut prev_point = match get_curve_start_point(curve) {
@@ -681,8 +511,8 @@ fn build_arc_length_table(curve: &Curve, total_length: f64) -> Vec<(f64, f64)> {
 
     table.push((0.0, 0.0));
 
-    for i in 1..=ARC_LENGTH_TABLE_SAMPLES {
-        let t = i as f64 / ARC_LENGTH_TABLE_SAMPLES as f64;
+    for i in 1..=sample_count {
+        let t = i as f64 / sample_count as f64;
         if let Some(point) = sample_curve_at_t(curve, t, total_length) {
             accumulated_length += (point - prev_point).hypot().to_raw();
             table.push((t, accumulated_length));
@@ -697,31 +527,36 @@ fn build_arc_length_table(curve: &Curve, total_length: f64) -> Vec<(f64, f64)> {
     table
 }
 
-/// Find the curve parameter t for a given arc length using linear interpolation.
+/// Find the curve parameter t for a given arc length using binary search and linear interpolation.
 fn arc_length_to_parameter(arc_table: &[(f64, f64)], target_length: f64) -> f64 {
     if arc_table.is_empty() || target_length <= 0.0 {
         return 0.0;
     }
-    
+
     let max_length = arc_table.last().map(|(_, l)| *l).unwrap_or(0.0);
     if target_length >= max_length {
         return 1.0;
     }
-    
-    for window in arc_table.windows(2) {
-        let (t1, len1) = window[0];
-        let (t2, len2) = window[1];
-        
-        if target_length >= len1 && target_length <= len2 {
-            if len2 - len1 > 0.0 {
-                let ratio = (target_length - len1) / (len2 - len1);
-                return t1 + ratio * (t2 - t1);
-            }
-            return t1;
-        }
+
+    let idx = arc_table.partition_point(|(_, len)| *len < target_length);
+
+    if idx == 0 {
+        return 0.0;
     }
-    
-    1.0
+
+    if idx >= arc_table.len() {
+        return 1.0;
+    }
+
+    let (t1, len1) = arc_table[idx - 1];
+    let (t2, len2) = arc_table[idx];
+
+    if len2 - len1 > 0.0 {
+        let ratio = (target_length - len1) / (len2 - len1);
+        t1 + ratio * (t2 - t1)
+    } else {
+        t1
+    }
 }
 
 /// Get the position and normal vector at a given arc length along the curve.
@@ -738,8 +573,13 @@ fn point_and_normal_at_length(curve: &Curve, arc_table: &[(f64, f64)], length: f
     let t = arc_length_to_parameter(arc_table, length);
     let skeleton_point = sample_curve_at_t(curve, t, total_length)?;
 
-    let t1 = (t - TANGENT_DELTA).max(0.0);
-    let t2 = (t + TANGENT_DELTA).min(1.0);
+    let (t1, t2) = if t < TANGENT_DELTA {
+        (0.0, 2.0 * TANGENT_DELTA)
+    } else if t > 1.0 - TANGENT_DELTA {
+        (1.0 - 2.0 * TANGENT_DELTA, 1.0)
+    } else {
+        (t - TANGENT_DELTA, t + TANGENT_DELTA)
+    };
 
     let p1 = sample_curve_at_t(curve, t1, total_length)?;
     let p2 = sample_curve_at_t(curve, t2, total_length)?;
@@ -760,11 +600,11 @@ fn point_and_normal_at_length(curve: &Curve, arc_table: &[(f64, f64)], length: f
 
 /// Sample a pattern curve at regular parameter intervals.
 fn sample_pattern_parametrically(pattern: &Curve, num_samples: usize) -> Vec<(f64, f64)> {
-    let mut samples = Vec::new();
-
     if pattern.is_empty() || num_samples == 0 {
-        return samples;
+        return Vec::new();
     }
+
+    let mut samples = Vec::with_capacity(num_samples + 1);
 
     let pattern_bbox = pattern.bbox_size();
     let pattern_width = pattern_bbox.x.to_raw();
@@ -811,8 +651,13 @@ pub fn calculate_curve_length(curve: &Curve) -> f64 {
             }
             crate::visualize::CurveItem::Cubic(c1, c2, p) => {
                 if has_start {
-                    let segment_length = estimate_cubic_bezier_length_recursive(current_point, *c1, *c2, *p, 0, BEZIER_MAX_DEPTH);
-                    total_length += segment_length;
+                    let bez = CubicBez::new(
+                        kurbo::Point::new(current_point.x.to_raw(), current_point.y.to_raw()),
+                        kurbo::Point::new(c1.x.to_raw(), c1.y.to_raw()),
+                        kurbo::Point::new(c2.x.to_raw(), c2.y.to_raw()),
+                        kurbo::Point::new(p.x.to_raw(), p.y.to_raw()),
+                    );
+                    total_length += bez.arclen(BEZIER_TOLERANCE);
                 }
                 current_point = *p;
                 has_start = true;
@@ -829,40 +674,6 @@ pub fn calculate_curve_length(curve: &Curve) -> f64 {
     total_length
 }
 
-/// Approximate cubic Bezier curve length using adaptive recursive subdivision.
-fn estimate_cubic_bezier_length_recursive(
-    p0: Point, 
-    p1: Point, 
-    p2: Point, 
-    p3: Point, 
-    depth: u32,
-    max_depth: u32
-) -> f64 {
-    let chord = (p3 - p0).hypot().to_raw();
-    
-    let poly_length = (p1 - p0).hypot().to_raw() 
-                    + (p2 - p1).hypot().to_raw() 
-                    + (p3 - p2).hypot().to_raw();
-    
-    if depth >= max_depth || (poly_length - chord).abs() < BEZIER_TOLERANCE {
-        return (poly_length + chord) / 2.0;
-    }
-    
-    let p01 = Point::new((p0.x + p1.x) / 2.0, (p0.y + p1.y) / 2.0);
-    let p12 = Point::new((p1.x + p2.x) / 2.0, (p1.y + p2.y) / 2.0);
-    let p23 = Point::new((p2.x + p3.x) / 2.0, (p2.y + p3.y) / 2.0);
-    
-    let p012 = Point::new((p01.x + p12.x) / 2.0, (p01.y + p12.y) / 2.0);
-    let p123 = Point::new((p12.x + p23.x) / 2.0, (p12.y + p23.y) / 2.0);
-    
-    let p0123 = Point::new((p012.x + p123.x) / 2.0, (p012.y + p123.y) / 2.0);
-    
-    let left_length = estimate_cubic_bezier_length_recursive(p0, p01, p012, p0123, depth + 1, max_depth);
-    let right_length = estimate_cubic_bezier_length_recursive(p0123, p123, p23, p3, depth + 1, max_depth);
-    
-    left_length + right_length
-}
-
 /// Sample curve at normalized parameter t ∈ [0, 1].
 fn sample_curve_at_t(curve: &Curve, t: f64, total_length: f64) -> Option<Point> {
     if curve.is_empty() {
@@ -871,11 +682,11 @@ fn sample_curve_at_t(curve: &Curve, t: f64, total_length: f64) -> Option<Point> 
 
     let clamped_t = t.clamp(0.0, 1.0);
     let target_length = clamped_t * total_length;
-    sample_curve_at_t_with_length(curve, clamped_t, total_length, target_length)
+    sample_curve_at_t_with_length(curve, total_length, target_length)
 }
 
 /// Walk through curve segments to find the point at a specific arc length.
-fn sample_curve_at_t_with_length(curve: &Curve, _t: f64, total_length: f64, target_length: f64) -> Option<Point> {
+fn sample_curve_at_t_with_length(curve: &Curve, total_length: f64, target_length: f64) -> Option<Point> {
     if total_length <= 0.0 {
         return get_curve_start_point(curve);
     }
@@ -911,26 +722,20 @@ fn sample_curve_at_t_with_length(curve: &Curve, _t: f64, total_length: f64, targ
                 current_point = *p;
             }
             crate::visualize::CurveItem::Cubic(c1, c2, p) => {
-                let seg_len = estimate_cubic_bezier_length_recursive(segment_start, *c1, *c2, *p, 0, BEZIER_MAX_DEPTH);
+                let bez = CubicBez::new(
+                    kurbo::Point::new(segment_start.x.to_raw(), segment_start.y.to_raw()),
+                    kurbo::Point::new(c1.x.to_raw(), c1.y.to_raw()),
+                    kurbo::Point::new(c2.x.to_raw(), c2.y.to_raw()),
+                    kurbo::Point::new(p.x.to_raw(), p.y.to_raw()),
+                );
+
+                let seg_len = bez.arclen(BEZIER_TOLERANCE);
 
                 if accumulated_length + seg_len >= target_length {
-                    let segment_t = if seg_len > 0.0 {
-                        (target_length - accumulated_length) / seg_len
-                    } else {
-                        0.0
-                    };
-
-                    let it = 1.0 - segment_t;
-                    let x = it.powi(3) * segment_start.x.to_raw() +
-                            3.0 * it.powi(2) * segment_t * c1.x.to_raw() +
-                            3.0 * it * segment_t.powi(2) * c2.x.to_raw() +
-                            segment_t.powi(3) * p.x.to_raw();
-                    let y = it.powi(3) * segment_start.y.to_raw() +
-                            3.0 * it.powi(2) * segment_t * c1.y.to_raw() +
-                            3.0 * it * segment_t.powi(2) * c2.y.to_raw() +
-                            segment_t.powi(3) * p.y.to_raw();
-
-                    return Some(Point::new(Abs::raw(x), Abs::raw(y)));
+                    let target_arc = target_length - accumulated_length;
+                    let segment_t = bez.inv_arclen(target_arc, BEZIER_TOLERANCE);
+                    let point = bez.eval(segment_t);
+                    return Some(Point::new(Abs::raw(point.x), Abs::raw(point.y)));
                 }
 
                 accumulated_length += seg_len;
@@ -964,56 +769,36 @@ fn sample_curve_at_t_with_length(curve: &Curve, _t: f64, total_length: f64, targ
     Some(current_point)
 }
 
-/// Find the first defined point in a curve.
+/// Find the first defined point in a curve (the starting point after first Move or implicit origin).
 fn get_curve_start_point(curve: &Curve) -> Option<Point> {
+    let cursor = Point::zero();
     for item in &curve.0 {
         match item {
             crate::visualize::CurveItem::Move(p) => return Some(*p),
-            crate::visualize::CurveItem::Line(p) => return Some(*p),
-            crate::visualize::CurveItem::Cubic(_, _, p) => return Some(*p),
+            crate::visualize::CurveItem::Line(_) => return Some(cursor),
+            crate::visualize::CurveItem::Cubic(_, _, _) => return Some(cursor),
             crate::visualize::CurveItem::Close => continue,
         }
     }
     None
 }
 
-/// Center a pattern by shifting it so its bounding box is centered on the x-axis.
+/// Center a pattern by shifting it so its bounding box is centered on the origin.
 fn center_pattern(pattern: &Curve) -> Curve {
     if pattern.is_empty() {
         return Curve::new();
     }
 
-    let mut min_x = f64::INFINITY;
-    let mut min_y = f64::INFINITY;
-    let mut has_points = false;
-
-    for item in &pattern.0 {
-        let mut record = |point: Point| {
-            min_x = min_x.min(point.x.to_raw());
-            min_y = min_y.min(point.y.to_raw());
-            has_points = true;
-        };
-
-        match item {
-            crate::visualize::CurveItem::Move(p) | crate::visualize::CurveItem::Line(p) => record(*p),
-            crate::visualize::CurveItem::Cubic(c1, c2, p) => {
-                record(*c1);
-                record(*c2);
-                record(*p);
-            }
-            crate::visualize::CurveItem::Close => {}
-        }
-    }
-
-    if !has_points {
+    let bbox = pattern.bbox();
+    if bbox.size().x == Abs::zero() || bbox.size().y == Abs::zero() {
         return Curve(pattern.0.clone());
     }
 
-    let bbox = pattern.bbox_size();
-    let offset = Point::new(
-        Abs::raw(-min_x) - bbox.x / 2.0,
-        -Abs::raw(min_y) - bbox.y / 2.0,
+    let center = Point::new(
+        (bbox.min.x + bbox.max.x) / 2.0,
+        (bbox.min.y + bbox.max.y) / 2.0,
     );
+    let offset = -center;
 
     let mut centered = Curve(pattern.0.clone());
     centered.translate(offset);
