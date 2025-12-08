@@ -12,6 +12,7 @@ const TANGENT_DELTA: f64 = 0.001;
 const BEZIER_TOLERANCE: f64 = 0.01;
 const BEZIER_MAX_DEPTH: u32 = 8;
 const MIN_SCALE_FACTOR: f64 = 0.1;
+const BOUNDARY_EPSILON: f64 = 0.001;
 
 /// Trait for pattern transformation strategies.
 trait PatternTransformer {
@@ -39,10 +40,10 @@ impl PatternTransformer for NoneTransformer {
         t_offset: f64,
         _x_scale: f64,
         skeleton_length: f64,
-        pattern_width: f64,
+        _pattern_width: f64,
     ) -> Curve {
         let mut result = Curve::new();
-        let pattern_center_pos = t_offset + pattern_width / 2.0;
+        let pattern_center_pos = t_offset;
 
         if pattern_center_pos < 0.0 || pattern_center_pos > skeleton_length {
             return result;
@@ -416,14 +417,12 @@ impl Tracing {
         let scaled_width = pattern_width * x_scale;
         let pattern_step = scaled_width + spacing_abs;
 
-        // Start the first pattern so its beginning aligns with start_offset
-        // Since patterns are centered, we offset by half the scaled width
         let mut t_offset = start_offset + (scaled_width / 2.0);
 
         for _ in 0..num_copies {
-            // Check if this pattern's end is within bounds
+            // Check if this pattern's end is within bounds (with small epsilon for floating-point tolerance)
             // Pattern extends from (t_offset - scaled_width/2) to (t_offset + scaled_width/2)
-            if t_offset + (scaled_width / 2.0) <= end_offset {
+            if t_offset + (scaled_width / 2.0) <= end_offset + BOUNDARY_EPSILON {
                 let transformed = self.transform_pattern_for_repeat(
                     self.0.repeat_type,
                     &centered_pattern,
@@ -450,6 +449,7 @@ impl Tracing {
         skeleton: &Curve,
         skeleton_length: f64,
         offset: f64,
+        force_preserve: bool,
     ) -> Curve {
         let mut result = Curve::new();
 
@@ -463,8 +463,14 @@ impl Tracing {
 
         let arc_table = build_arc_length_table(skeleton, skeleton_length);
 
+        let repeat_type = if force_preserve {
+            RepeatType::Preserve
+        } else {
+            self.0.repeat_type
+        };
+
         let transformed = self.transform_pattern_for_repeat(
-            self.0.repeat_type,
+            repeat_type,
             &centered_pattern,
             skeleton,
             &arc_table,
@@ -562,12 +568,12 @@ fn transform_pattern_affine(
     t_offset: f64,
     scale_factor: Option<f64>,
     skeleton_length: f64,
-    pattern_width: f64,
+    _pattern_width: f64,
 ) -> Curve {
     let mut result = Curve::new();
 
-    let scale = scale_factor.unwrap_or(1.0);
-    let pattern_center_pos = t_offset + (pattern_width * scale) / 2.0;
+
+    let pattern_center_pos = t_offset;
 
     if pattern_center_pos < 0.0 || pattern_center_pos > skeleton_length {
         return result;
@@ -622,14 +628,10 @@ fn calculate_pattern_layout(
         .max(1.0) as usize;
     
     let x_scale = match repeat_type {
-        RepeatType::Scale => {
+        RepeatType::Scale | RepeatType::Stretch => {
             let total_gap = (num_copies - 1) as f64 * spacing_abs;
             let available_for_patterns = skeleton_length - total_gap;
             let scale = available_for_patterns / (num_copies as f64 * pattern_width);
-            scale.max(MIN_SCALE_FACTOR)
-        }
-        RepeatType::Stretch => {
-            let scale = skeleton_length / (num_copies as f64 * pattern_width);
             scale.max(MIN_SCALE_FACTOR)
         }
         RepeatType::Preserve | RepeatType::Rotate | RepeatType::None => 1.0,

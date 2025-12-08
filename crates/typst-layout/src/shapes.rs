@@ -1530,11 +1530,13 @@ fn apply_tracing(
 
     // Apply start pattern if it exists
     if let Some(start) = &start_curve {
+        let start_offset = start_width / 2.0;
         let start_result = tracing.apply_pattern_once(
             start,
             skeleton,
             skeleton_length,
-            0.0,
+            start_offset,
+            true,
         );
         result_curve.0.extend(start_result.0.iter().cloned());
         repeat_start = start_width + spacing_abs;
@@ -1562,12 +1564,13 @@ fn apply_tracing(
 
     // Apply end pattern if it exists
     if let Some(end) = &end_curve {
-        let end_offset = skeleton_length - end_width;
+        let end_offset = skeleton_length - end_width / 2.0;
         let end_result = tracing.apply_pattern_once(
             end,
             skeleton,
             skeleton_length,
             end_offset,
+            true,
         );
         result_curve.0.extend(end_result.0.iter().cloned());
     }
