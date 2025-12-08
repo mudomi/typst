@@ -219,7 +219,7 @@ impl Tracing {
         skeleton_length: f64,
         start_offset: f64,
         end_offset: f64,
-        arc_table: Option<&[(f64, f64)]>,
+        _arc_table: Option<&[(f64, f64)]>,
         centered_pattern: Option<&Curve>,
     ) -> Curve {
         let mut result = Curve::new();
@@ -231,14 +231,6 @@ impl Tracing {
         if pattern_width <= 0.0 || skeleton_length <= 0.0 {
             return result;
         }
-
-        let scratch;
-        let table = if let Some(table) = arc_table {
-            table
-        } else {
-            scratch = build_arc_length_table(skeleton, skeleton_length);
-            &scratch
-        };
 
         let available_length = end_offset - start_offset;
 
@@ -266,7 +258,6 @@ impl Tracing {
                     self.0.repeat_type,
                     &centered,
                     skeleton,
-                    table,
                     t_offset,
                     x_scale,
                     skeleton_length,
@@ -291,7 +282,7 @@ impl Tracing {
         skeleton_length: f64,
         offset: f64,
         force_preserve: bool,
-        arc_table: Option<&[(f64, f64)]>,
+        _arc_table: Option<&[(f64, f64)]>,
         centered_pattern: Option<&Curve>,
     ) -> Curve {
         let mut result = Curve::new();
@@ -304,14 +295,6 @@ impl Tracing {
             return result;
         }
 
-        let scratch;
-        let table = if let Some(table) = arc_table {
-            table
-        } else {
-            scratch = build_arc_length_table(skeleton, skeleton_length);
-            &scratch
-        };
-
         let repeat_type = if force_preserve {
             RepeatType::Preserve
         } else {
@@ -322,7 +305,6 @@ impl Tracing {
             repeat_type,
             &centered,
             skeleton,
-            table,
             offset,
             1.0, // No scaling for start/end
             skeleton_length,
@@ -337,7 +319,6 @@ impl Tracing {
         repeat: RepeatType,
         pattern: &Curve,
         skeleton: &Curve,
-        arc_table: &[(f64, f64)],
         t_offset: f64,
         x_scale: f64,
         skeleton_length: f64,
@@ -346,7 +327,6 @@ impl Tracing {
             RepeatType::None | RepeatType::Rotate => transform_pattern_affine(
                 pattern,
                 skeleton,
-                arc_table,
                 t_offset,
                 None,
                 skeleton_length,
@@ -362,7 +342,6 @@ impl Tracing {
                 deform_pattern_along_skeleton(
                     pattern,
                     skeleton,
-                    arc_table,
                     t_offset,
                     sx,
                     sy,
@@ -378,7 +357,6 @@ impl Tracing {
 fn deform_pattern_along_skeleton(
     pattern: &Curve,
     skeleton: &Curve,
-    arc_table: &[(f64, f64)],
     t_offset: f64,
     x_scale: f64,
     y_scale: f64,
@@ -402,7 +380,7 @@ fn deform_pattern_along_skeleton(
         let skeleton_arc_length = t_offset + x;
 
         if skeleton_arc_length >= 0.0 && skeleton_arc_length <= skeleton_length {
-            if let Some((skeleton_pt, normal)) = point_and_normal_at_length(skeleton, arc_table, skeleton_arc_length) {
+            if let Some((skeleton_pt, normal)) = point_and_normal_at_length(skeleton, skeleton_length, skeleton_arc_length) {
                 let final_pt = Point::new(
                     skeleton_pt.x + normal.x * y,
                     skeleton_pt.y + normal.y * y,
@@ -429,7 +407,6 @@ fn deform_pattern_along_skeleton(
 fn transform_pattern_affine(
     pattern: &Curve,
     skeleton: &Curve,
-    arc_table: &[(f64, f64)],
     t_offset: f64,
     scale_factor: Option<f64>,
     skeleton_length: f64,
@@ -441,7 +418,7 @@ fn transform_pattern_affine(
         return result;
     }
 
-    if let Some((skeleton_center, skeleton_normal)) = point_and_normal_at_length(skeleton, arc_table, t_offset) {
+    if let Some((skeleton_center, skeleton_normal)) = point_and_normal_at_length(skeleton, skeleton_length, t_offset) {
         let mut transform = Affine::translate((skeleton_center.x.to_raw(), skeleton_center.y.to_raw()));
 
         if apply_rotation {
@@ -537,45 +514,8 @@ fn build_arc_length_table(curve: &Curve, total_length: f64) -> Vec<(f64, f64)> {
     table
 }
 
-/// Find the curve parameter t for a given arc length using binary search and linear interpolation.
-fn arc_length_to_parameter(arc_table: &[(f64, f64)], target_length: f64) -> f64 {
-    if arc_table.is_empty() || target_length <= 0.0 {
-        return 0.0;
-    }
-
-    let max_length = arc_table.last().map(|(_, l)| *l).unwrap_or(0.0);
-    if target_length >= max_length {
-        return 1.0;
-    }
-
-    let idx = arc_table.partition_point(|(_, len)| *len < target_length);
-
-    if idx == 0 {
-        return 0.0;
-    }
-
-    if idx >= arc_table.len() {
-        return 1.0;
-    }
-
-    let (t1, len1) = arc_table[idx - 1];
-    let (t2, len2) = arc_table[idx];
-
-    if len2 - len1 > 0.0 {
-        let ratio = (target_length - len1) / (len2 - len1);
-        t1 + ratio * (t2 - t1)
-    } else {
-        t1
-    }
-}
-
 /// Get the position and normal vector at a given arc length along the curve.
-fn point_and_normal_at_length(curve: &Curve, arc_table: &[(f64, f64)], length: f64) -> Option<(Point, Point)> {
-    if arc_table.is_empty() {
-        return None;
-    }
-
-    let total_length = arc_table.last().map(|(_, l)| *l).unwrap_or(0.0);
+fn point_and_normal_at_length(curve: &Curve, total_length: f64, length: f64) -> Option<(Point, Point)> {
     if total_length <= 0.0 {
         return None;
     }
