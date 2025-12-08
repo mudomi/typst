@@ -188,7 +188,7 @@ fn layout_body(
     // way too big.
     // This will never panic as a paren will never shape into nothing.
     let paren =
-        GlyphFragment::new_char(ctx, styles.chain(&denom_style), '(', Span::detached())?
+        GlyphFragment::new_char(ctx, styles.chain(&denom_style), '(', Span::detached())
             .unwrap();
 
     for (column, col) in columns.iter().zip(&mut cols) {
@@ -203,7 +203,7 @@ fn layout_body(
                 ctx.engine.sink.warn(warning!(
                    cell_span,
                    "linebreaks are ignored in {}", children;
-                   hint: "use commas instead to separate each line"
+                   hint: "use commas instead to separate each line";
                 ));
             }
 
