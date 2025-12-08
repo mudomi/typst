@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ecow::EcoString;
-use kurbo::{Affine, CubicBez, ParamCurve, ParamCurveArclen};
+use kurbo::{Affine, CubicBez, ParamCurve, ParamCurveArclen, ParamCurveDeriv};
 use typst_syntax::Span;
 
 use crate::diag::{At, SourceResult, HintedStrResult};
@@ -15,7 +15,6 @@ const BASE_SAMPLE_COUNT: usize = 10;
 const SAMPLES_PER_SEGMENT: usize = 5;
 const MAX_SAMPLE_COUNT: usize = 200;
 
-const TANGENT_DELTA: f64 = 0.001;
 const BEZIER_TOLERANCE: f64 = 0.01;
 const MIN_SCALE_FACTOR: f64 = 0.1;
 const RELATIVE_EPSILON: f64 = 1e-6;
@@ -344,20 +343,31 @@ impl Tracing {
         skeleton_length: f64,
     ) -> Curve {
         match repeat {
-            RepeatType::None => {
-                transform_pattern_affine(pattern, skeleton, arc_table, t_offset, None, skeleton_length, false)
-            }
-            RepeatType::Rotate => {
-                transform_pattern_affine(pattern, skeleton, arc_table, t_offset, None, skeleton_length, true)
-            }
-            RepeatType::Scale => {
-                deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, x_scale, x_scale, skeleton_length)
-            }
-            RepeatType::Preserve => {
-                deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, 1.0, 1.0, skeleton_length)
-            }
-            RepeatType::Stretch => {
-                deform_pattern_along_skeleton(pattern, skeleton, arc_table, t_offset, x_scale, 1.0, skeleton_length)
+            RepeatType::None | RepeatType::Rotate => transform_pattern_affine(
+                pattern,
+                skeleton,
+                arc_table,
+                t_offset,
+                None,
+                skeleton_length,
+                repeat == RepeatType::Rotate,
+            ),
+            RepeatType::Scale | RepeatType::Preserve | RepeatType::Stretch => {
+                let (sx, sy) = match repeat {
+                    RepeatType::Scale => (x_scale, x_scale),
+                    RepeatType::Preserve => (1.0, 1.0),
+                    RepeatType::Stretch => (x_scale, 1.0),
+                    _ => unreachable!(),
+                };
+                deform_pattern_along_skeleton(
+                    pattern,
+                    skeleton,
+                    arc_table,
+                    t_offset,
+                    sx,
+                    sy,
+                    skeleton_length,
+                )
             }
         }
     }
@@ -570,32 +580,109 @@ fn point_and_normal_at_length(curve: &Curve, arc_table: &[(f64, f64)], length: f
         return None;
     }
 
-    let t = arc_length_to_parameter(arc_table, length);
-    let skeleton_point = sample_curve_at_t(curve, t, total_length)?;
-
-    let (t1, t2) = if t < TANGENT_DELTA {
-        (0.0, 2.0 * TANGENT_DELTA)
-    } else if t > 1.0 - TANGENT_DELTA {
-        (1.0 - 2.0 * TANGENT_DELTA, 1.0)
+    let (pos, tangent) = evaluate_curve_at_length(curve, total_length, length)?;
+    let len = tangent.hypot().to_raw();
+    let normal = if len > 0.0 {
+        Point::new(-tangent.y / len, tangent.x / len)
     } else {
-        (t - TANGENT_DELTA, t + TANGENT_DELTA)
+        Point::new(Abs::zero(), Abs::pt(1.0))
     };
 
-    let p1 = sample_curve_at_t(curve, t1, total_length)?;
-    let p2 = sample_curve_at_t(curve, t2, total_length)?;
+    Some((pos, normal))
+}
 
-    let diff = p2 - p1;
-    let length_val = diff.hypot().to_raw();
+/// Get the position and tangent vector at a given arc length along the curve.
+fn evaluate_curve_at_length(curve: &Curve, total_length: f64, target_length: f64) -> Option<(Point, Point)> {
+    if total_length <= 0.0 {
+        let p = get_curve_start_point(curve)?;
+        return Some((p, Point::new(Abs::zero(), Abs::pt(1.0))));
+    }
 
-    let normal = if length_val > 0.0 {
-        let tx = diff.x.to_raw() / length_val;
-        let ty = diff.y.to_raw() / length_val;
-        Point::new(Abs::raw(-ty), Abs::raw(tx))
-    } else {
-        Point::new(Abs::raw(0.0), Abs::raw(1.0))
-    };
+    let mut accumulated_length = 0.0;
+    let mut current_point = get_curve_start_point(curve)?;
+    let mut segment_start = current_point;
 
-    Some((skeleton_point, normal))
+    for item in &curve.0 {
+        match item {
+            crate::visualize::CurveItem::Move(p) => {
+                current_point = *p;
+                segment_start = *p;
+            }
+            crate::visualize::CurveItem::Line(p) => {
+                let diff = *p - segment_start;
+                let segment_length = diff.hypot().to_raw();
+
+                if accumulated_length + segment_length >= target_length {
+                    let segment_t = if segment_length > 0.0 {
+                        (target_length - accumulated_length) / segment_length
+                    } else {
+                        0.0
+                    };
+
+                    let pos = Point::new(
+                        segment_start.x + diff.x * segment_t,
+                        segment_start.y + diff.y * segment_t,
+                    );
+                    return Some((pos, diff));
+                }
+
+                accumulated_length += segment_length;
+                segment_start = *p;
+                current_point = *p;
+            }
+            crate::visualize::CurveItem::Cubic(c1, c2, p) => {
+                let bez = CubicBez::new(
+                    kurbo::Point::new(segment_start.x.to_raw(), segment_start.y.to_raw()),
+                    kurbo::Point::new(c1.x.to_raw(), c1.y.to_raw()),
+                    kurbo::Point::new(c2.x.to_raw(), c2.y.to_raw()),
+                    kurbo::Point::new(p.x.to_raw(), p.y.to_raw()),
+                );
+
+                let seg_len = bez.arclen(BEZIER_TOLERANCE);
+
+                if accumulated_length + seg_len >= target_length {
+                    let target_arc = target_length - accumulated_length;
+                    let segment_t = bez.inv_arclen(target_arc, BEZIER_TOLERANCE);
+                    let point = bez.eval(segment_t);
+                    let deriv = bez.deriv().eval(segment_t);
+
+                    return Some((
+                        Point::new(Abs::raw(point.x), Abs::raw(point.y)),
+                        Point::new(Abs::raw(deriv.x), Abs::raw(deriv.y)),
+                    ));
+                }
+
+                accumulated_length += seg_len;
+                segment_start = *p;
+                current_point = *p;
+            }
+            crate::visualize::CurveItem::Close => {
+                if let Some(start) = get_curve_start_point(curve) {
+                    let diff = start - current_point;
+                    let segment_length = diff.hypot().to_raw();
+
+                    if accumulated_length + segment_length >= target_length {
+                        let segment_t = if segment_length > 0.0 {
+                            (target_length - accumulated_length) / segment_length
+                        } else {
+                            0.0
+                        };
+
+                        let pos = Point::new(
+                            current_point.x + diff.x * segment_t,
+                            current_point.y + diff.y * segment_t,
+                        );
+                        return Some((pos, diff));
+                    }
+
+                    accumulated_length += segment_length;
+                    current_point = start;
+                }
+            }
+        }
+    }
+
+    Some((current_point, Point::new(Abs::zero(), Abs::pt(1.0))))
 }
 
 /// Sample a pattern curve at regular parameter intervals.
@@ -687,86 +774,7 @@ fn sample_curve_at_t(curve: &Curve, t: f64, total_length: f64) -> Option<Point> 
 
 /// Walk through curve segments to find the point at a specific arc length.
 fn sample_curve_at_t_with_length(curve: &Curve, total_length: f64, target_length: f64) -> Option<Point> {
-    if total_length <= 0.0 {
-        return get_curve_start_point(curve);
-    }
-
-    let mut accumulated_length = 0.0;
-    let mut current_point = get_curve_start_point(curve)?;
-    let mut segment_start = current_point;
-
-    for item in &curve.0 {
-        match item {
-            crate::visualize::CurveItem::Move(p) => {
-                current_point = *p;
-                segment_start = *p;
-            }
-            crate::visualize::CurveItem::Line(p) => {
-                let segment_length = (*p - segment_start).hypot().to_raw();
-
-                if accumulated_length + segment_length >= target_length {
-                    let segment_t = if segment_length > 0.0 {
-                        (target_length - accumulated_length) / segment_length
-                    } else {
-                        0.0
-                    };
-
-                    return Some(Point::new(
-                        segment_start.x + (p.x - segment_start.x) * segment_t,
-                        segment_start.y + (p.y - segment_start.y) * segment_t,
-                    ));
-                }
-
-                accumulated_length += segment_length;
-                segment_start = *p;
-                current_point = *p;
-            }
-            crate::visualize::CurveItem::Cubic(c1, c2, p) => {
-                let bez = CubicBez::new(
-                    kurbo::Point::new(segment_start.x.to_raw(), segment_start.y.to_raw()),
-                    kurbo::Point::new(c1.x.to_raw(), c1.y.to_raw()),
-                    kurbo::Point::new(c2.x.to_raw(), c2.y.to_raw()),
-                    kurbo::Point::new(p.x.to_raw(), p.y.to_raw()),
-                );
-
-                let seg_len = bez.arclen(BEZIER_TOLERANCE);
-
-                if accumulated_length + seg_len >= target_length {
-                    let target_arc = target_length - accumulated_length;
-                    let segment_t = bez.inv_arclen(target_arc, BEZIER_TOLERANCE);
-                    let point = bez.eval(segment_t);
-                    return Some(Point::new(Abs::raw(point.x), Abs::raw(point.y)));
-                }
-
-                accumulated_length += seg_len;
-                segment_start = *p;
-                current_point = *p;
-            }
-            crate::visualize::CurveItem::Close => {
-                if let Some(start) = get_curve_start_point(curve) {
-                    let segment_length = (start - current_point).hypot().to_raw();
-
-                    if accumulated_length + segment_length >= target_length {
-                        let segment_t = if segment_length > 0.0 {
-                            (target_length - accumulated_length) / segment_length
-                        } else {
-                            0.0
-                        };
-
-                        return Some(Point::new(
-                            current_point.x + (start.x - current_point.x) * segment_t,
-                            current_point.y + (start.y - current_point.y) * segment_t,
-                        ));
-                    }
-
-                    accumulated_length += segment_length;
-                    current_point = start;
-                }
-            }
-        }
-    }
-
-    Some(current_point)
+    evaluate_curve_at_length(curve, total_length, target_length).map(|(p, _)| p)
 }
 
 /// Find the first defined point in a curve (the starting point after first Move or implicit origin).
