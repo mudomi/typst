@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use tiny_skia as sk;
-use typst_library::layout::{Axes, Point, Ratio, Size};
-use typst_library::visualize::{Color, Gradient, Paint, RelativeTo, Tiling};
+use typst_library::layout::{Abs, Axes, Point, Ratio, Size};
+use typst_library::visualize::{
+    Geometry, Gradient, Paint, ProcessColor, RelativeTo, Shape, Tiling,
+};
 
 use crate::{AbsExt, State};
 
@@ -64,10 +66,14 @@ impl PaintSampler for GradientSampler<'_> {
         self.transform_to_parent.map_point(&mut point);
 
         // Sample the gradient
-        to_sk_color_u8(self.gradient.sample_at(
-            (point.x, point.y),
-            (self.container_size.x.to_f32(), self.container_size.y.to_f32()),
-        ))
+        to_sk_color_u8(
+            self.gradient
+                .sample_at(
+                    (point.x, point.y),
+                    (self.container_size.x.to_f32(), self.container_size.y.to_f32()),
+                )
+                .to_process(),
+        )
         .premultiply()
     }
 }
@@ -131,11 +137,10 @@ impl PaintSampler for TilingSampler<'_> {
 pub fn to_sk_paint<'a>(
     paint: &Paint,
     state: State,
-    item_size: Size,
     on_text: bool,
-    fill_transform: Option<sk::Transform>,
     pixmap: &'a mut Option<Arc<sk::Pixmap>>,
-    gradient_map: Option<(Point, Axes<Ratio>)>,
+    shape: Option<&Shape>,
+    include_stroke_in_bbox: bool,
 ) -> sk::Paint<'a> {
     /// Actual sampling of the gradient, cached for performance.
     #[comemo::memoize]
@@ -159,17 +164,37 @@ pub fn to_sk_paint<'a>(
                 );
 
                 pixmap.pixels_mut()[(y * width + x) as usize] =
-                    to_sk_color(color).premultiply().to_color_u8();
+                    to_sk_color(color.to_process()).premultiply().to_color_u8();
             }
         }
 
         Arc::new(pixmap)
     }
 
+    let (item_size, fill_transform, gradient_map) = if let Some(shape) = shape {
+        let bbox = shape.bbox(include_stroke_in_bbox);
+        let fill_transform =
+            sk::Transform::from_translate(bbox.min.x.to_f32(), bbox.min.y.to_f32());
+        let gradient_map = match shape.geometry {
+            // Special handling for rectangles (mirrors gradients for negative sizes)
+            Geometry::Rect(rect) => Some((
+                Point::new(
+                    if rect.x.signum() < 0.0 { -bbox.size().x } else { Abs::zero() },
+                    if rect.y.signum() < 0.0 { -bbox.size().y } else { Abs::zero() },
+                ) * state.pixel_per_pt as f64,
+                Axes::new(Ratio::new(rect.x.signum()), Ratio::new(rect.y.signum())),
+            )),
+            _ => None,
+        };
+        (bbox.size(), Some(fill_transform), gradient_map)
+    } else {
+        (Size::zero(), None, None)
+    };
+
     let mut sk_paint: sk::Paint<'_> = sk::Paint::default();
     match paint {
         Paint::Solid(color) => {
-            sk_paint.set_color(to_sk_color(*color));
+            sk_paint.set_color(to_sk_color(color.to_process()));
             sk_paint.anti_alias = true;
         }
         Paint::Gradient(gradient) => {
@@ -231,7 +256,7 @@ pub fn to_sk_paint<'a>(
             let canvas = render_tiling_frame(&state, tilings);
             *pixmap = Some(Arc::new(canvas));
 
-            let offset = match relative {
+            let base_offset = match relative {
                 RelativeTo::Self_ => {
                     gradient_map.map(|(offset, _)| -offset).unwrap_or_default()
                 }
@@ -245,8 +270,12 @@ pub fn to_sk_paint<'a>(
                 sk::FilterQuality::Nearest,
                 1.0,
                 fill_transform
+                    .pre_translate(
+                        tilings.offset().x.to_f32(),
+                        tilings.offset().y.to_f32(),
+                    )
                     .pre_scale(1.0 / state.pixel_per_pt, 1.0 / state.pixel_per_pt)
-                    .pre_translate(offset.x.to_f32(), offset.y.to_f32()),
+                    .pre_translate(base_offset.x.to_f32(), base_offset.y.to_f32()),
             );
         }
         Paint::Tracing(_) => {
@@ -257,13 +286,13 @@ pub fn to_sk_paint<'a>(
     sk_paint
 }
 
-pub fn to_sk_color(color: Color) -> sk::Color {
+pub fn to_sk_color(color: ProcessColor) -> sk::Color {
     let (r, g, b, a) = color.to_rgb().into_components();
     sk::Color::from_rgba(r, g, b, a)
         .expect("components must always be in the range [0..=1]")
 }
 
-pub fn to_sk_color_u8(color: Color) -> sk::ColorU8 {
+pub fn to_sk_color_u8(color: ProcessColor) -> sk::ColorU8 {
     let (r, g, b, a) = color.to_rgb().into_format::<u8, u8>().into_components();
     sk::ColorU8::from_rgba(r, g, b, a)
 }

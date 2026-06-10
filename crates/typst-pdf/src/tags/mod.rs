@@ -1,12 +1,14 @@
-use krilla::configure::Validator;
+use krilla::configure::PdfVersion;
 use krilla::geom as kg;
 use krilla::page::Page;
 use krilla::surface::Surface;
-use krilla::tagging::{ArtifactType, ContentTag, SpanTag};
-use typst_library::diag::SourceResult;
-use typst_library::layout::{FrameParent, PagedDocument, Point, Rect, Size};
+use krilla::tagging::{Artifact, ArtifactType, ContentTag, SpanTag};
+use typst_layout::PagedDocument;
+use typst_library::diag::{SourceResult, bail};
+use typst_library::layout::{FrameParent, Point, Rect, Size};
 use typst_library::text::{Locale, TextItem};
 use typst_library::visualize::{Image, Shape};
+use typst_syntax::Span;
 
 use crate::PdfOptions;
 use crate::convert::{FrameContext, GlobalContext};
@@ -25,6 +27,10 @@ mod util;
 
 pub fn init(document: &PagedDocument, options: &PdfOptions) -> SourceResult<Tags> {
     let tree = if options.tagged {
+        if options.page_ranges.is_some() {
+            bail!(Span::detached(), "cannot enable tagged PDF and export a page range");
+        }
+
         tree::build(document, options)?
     } else {
         Tree::empty(document, options)
@@ -32,35 +38,36 @@ pub fn init(document: &PagedDocument, options: &PdfOptions) -> SourceResult<Tags
     Ok(Tags::new(tree))
 }
 
-pub fn handle_start(gc: &mut GlobalContext, surface: &mut Surface) {
+pub fn handle_start(gc: &mut GlobalContext, fc: &FrameContext, surface: &mut Surface) {
     if disabled(gc) {
         return;
     }
 
-    tree::step_start_tag(&mut gc.tags.tree, surface);
+    tree::step_start_tag(gc, fc, surface);
 }
 
-pub fn handle_end(gc: &mut GlobalContext, surface: &mut Surface) {
+pub fn handle_end(gc: &mut GlobalContext, fc: &FrameContext, surface: &mut Surface) {
     if disabled(gc) {
         return;
     }
 
-    tree::step_end_tag(&mut gc.tags.tree, surface);
+    tree::step_end_tag(gc, fc, surface);
 }
 
 pub fn group<T>(
     gc: &mut GlobalContext,
+    fc: &mut FrameContext,
     surface: &mut Surface,
     parent: Option<FrameParent>,
-    group_fn: impl FnOnce(&mut GlobalContext, &mut Surface) -> T,
+    group_fn: impl FnOnce(&mut GlobalContext, &mut FrameContext, &mut Surface) -> T,
 ) -> T {
     if disabled(gc) || parent.is_none() {
-        return group_fn(gc, surface);
+        return group_fn(gc, fc, surface);
     }
 
-    tree::enter_logical_child(&mut gc.tags.tree, surface);
+    tree::enter_logical_child(gc, fc, surface);
 
-    let res = group_fn(gc, surface);
+    let res = group_fn(gc, fc, surface);
 
     tree::leave_logical_child(&mut gc.tags.tree, surface);
 
@@ -93,6 +100,7 @@ pub fn page<T>(
 pub fn tiling<T>(
     gc: &mut GlobalContext,
     surface: &mut Surface,
+    tiling_size: Size,
     f: impl FnOnce(&mut GlobalContext, &mut Surface) -> T,
 ) -> T {
     if disabled(gc) {
@@ -103,7 +111,24 @@ pub fn tiling<T>(
     gc.tags.in_tiling = true;
     let mark_artifact = gc.tags.tree.parent_artifact().is_none();
     if mark_artifact {
-        surface.start_tagged(ContentTag::Artifact(ArtifactType::Other));
+        let bbox = kg::Rect::from_ltrb(
+            0.0,
+            0.0,
+            tiling_size.x.to_pt() as f32,
+            tiling_size.y.to_pt() as f32,
+        );
+        surface.start_tagged(ContentTag::Artifact(Artifact::new(
+            if gc.options.standards.config.version() == PdfVersion::Pdf17
+                && bbox.is_none()
+            {
+                // PDF 1.7 cannot tolerate empty bounding boxes for background
+                // artifacts.
+                ArtifactType::Other
+            } else {
+                ArtifactType::Background
+            },
+            bbox,
+        )));
     }
 
     let res = f(gc, surface);
@@ -231,18 +256,27 @@ pub fn shape<'a, 'b>(
     fc: &FrameContext,
     surface: &'b mut Surface<'a>,
     shape: &Shape,
+    artifact_type: ArtifactType,
 ) -> TagHandle<'a, 'b> {
     if disabled(gc) {
         return TagHandle { surface, started: false };
     }
 
-    update_bbox(gc, fc, || shape.geometry.bbox());
+    update_bbox(gc, fc, || shape.bbox(true));
 
     if gc.tags.tree.parent_artifact().is_some() {
         return TagHandle { surface, started: false };
     }
 
-    surface.start_tagged(ContentTag::Artifact(ArtifactType::Other));
+    surface.start_tagged(ContentTag::Artifact(Artifact::with_kind(
+        if gc.options.standards.config.version() == PdfVersion::Pdf17
+            && artifact_type == ArtifactType::Background
+        {
+            ArtifactType::Other
+        } else {
+            artifact_type
+        },
+    )));
 
     TagHandle { surface, started: true }
 }
@@ -253,8 +287,36 @@ fn update_bbox(
     compute_bbox: impl FnOnce() -> Rect,
 ) {
     if let Some(bbox) = gc.tags.tree.parent_bbox()
-        && gc.options.standards.config.validator() == Validator::UA1
+        && gc.options.standards.config.validators().accessibility().is_some()
     {
         bbox.expand_frame(fc, compute_bbox);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+
+    use ecow::EcoVec;
+    use typst_layout::PagedDocument;
+    use typst_library::layout::PageRanges;
+    use typst_library::model::DocumentInfo;
+    use typst_utils::NonZeroExt;
+
+    use crate::tags;
+
+    #[test]
+    fn tagged_and_page_range() {
+        let options = crate::PdfOptions {
+            page_ranges: Some(PageRanges::new(vec![Some(NonZeroUsize::ONE)..=None])),
+            ..Default::default()
+        };
+        let document = PagedDocument::new(EcoVec::new(), DocumentInfo::default());
+        let res = tags::init(&document, &options);
+
+        assert_eq!(
+            res.err().unwrap().first().unwrap().message,
+            "cannot enable tagged PDF and export a page range"
+        );
     }
 }

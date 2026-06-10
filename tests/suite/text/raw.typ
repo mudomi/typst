@@ -68,6 +68,194 @@ The keyword ```rust let```.
         B
     ```
 
+--- raw-empty-inline eval ---
+#let raw = ``
+#test(raw.text, "")
+#test(raw.block, false)
+
+--- raw-empty-spaces eval ---
+#let raw = ```   ```
+#test(raw.text, "")
+#test(raw.block, false)
+
+--- raw-empty-newlines eval ---
+#let raw = ```
+
+
+```
+#test(raw.text, "\n")
+#test(raw.block, true)
+
+--- raw-newlines-backtick eval ---
+#let raw = ```
+
+`
+
+```
+#test(raw.text, "\n`\n")
+#test(raw.block, true)
+
+--- raw-backtick eval ---
+#let raw = ``` ` ```
+#test(raw.text, "`")
+#test(raw.block, false)
+
+--- raw-lang-backtick eval ---
+#let raw = ```lang ` ```
+#test(raw.lang, "lang")
+#test(raw.text, "`")
+#test(raw.block, false)
+
+--- raw-lang-backtick-no-space eval ---
+// The language tag stops at a backtick even without whitespace.
+// TODO: Do we want this behavior? It was not discussed in #7337.
+#let raw = ```lang`test ` ```
+#test(raw.lang, "lang")
+#test(raw.text, "`test `")
+#test(raw.block, false)
+
+--- raw-lang-space eval ---
+// The language tag stops at a space.
+#let raw = ```lang test ```
+#test(raw.lang, "lang")
+#test(raw.text, "test ")
+#test(raw.block, false)
+
+--- raw-lang--multi-space eval ---
+// The language tag only discards one space.
+#let raw = ```lang  test```
+#test(raw.lang, "lang")
+#test(raw.text, " test")
+#test(raw.block, false)
+
+--- raw-lang-newline eval ---
+// The language tag stops at a newline.
+#let raw = ```lang
+test
+```
+#test(raw.lang, "lang")
+#test(raw.text, "test")
+#test(raw.block, true)
+
+--- raw-lang-no-text eval ---
+// Warning: 12-22 empty raw text
+// Hint: 12-22 Typst is treating `lang` as the language tag
+// Hint: 15-19 to treat this as text, add a space after the initial backticks
+#let raw = ```lang```
+#test(raw.lang, "lang")
+#test(raw.text, "")
+#test(raw.block, false)
+
+--- raw-lang-non-ident eval ---
+// The language tag does not have to be a valid identifier.
+// Warning: 15-25 no whitespace between language tag and raw text
+// Hint: 15-19 if the current behavior is correct, please add a space after `lang`
+// Hint: 15-19 otherwise, add a space or newline after the initial backticks
+// Hint: 15-25 currently, Typst is treating `lang` as the language tag
+// Hint: 15-25 in the next version of Typst, this will change and we will treat all text until the first whitespace as the language tag
+#let raw = ```lang.tag++ test```
+#test(raw.lang, "lang")
+#test(raw.text, ".tag++ test")
+#test(raw.block, false)
+
+--- raw-lang-starts-non-ident eval ---
+// Test the language tag starting with non-identifier characters.
+// Warning: 15-31 no whitespace before raw text
+// Hint: 15-31 in the next version of Typst, this text will be treated as the language tag for this element
+// Hint: 15-31 to avoid this, add a space after the initial backticks
+#let raw = ```!@#$%^&*()_+lang test```
+#test(raw.text, "!@#$%^&*()_+lang test")
+// Error: 11-15 field "lang" in raw is not known at this point
+#test(raw.lang, none)
+#test(raw.block, false)
+
+--- raw-blocky eval ---
+// The first line and the last line are ignored.
+#let raw = {
+```
+test
+```
+}
+#test(raw.text, "test")
+#test(raw.block, true)
+
+--- raw-blocky-dedent eval ---
+// A blocky raw should handle dedents.
+#let raw = {
+```
+test
+```
+}
+#test(raw.text, "test")
+#test(raw.block, true)
+
+--- raw-blocky-dedent-firstline eval ---
+// When there is content in the first line, we discard a single whitespace char.
+#let raw = ``` test
+  ```
+#test(raw.text, "test")
+#test(raw.block, true)
+
+--- raw-blocky-dedent-firstline2 eval ---
+// When there is content in the first line, we discard a single whitespace char.
+#let raw = ``` test
+```
+#test(raw.text, "test")
+#test(raw.block, true)
+
+--- raw-blocky-dedent-firstline3 eval ---
+// The first line is not affected by dedent, and the middle lines don't consider
+// the whitespace prefix of the first line.
+#let raw = ``` test
+     test2
+  ```
+#test(raw.text, "test\n   test2")
+#test(raw.block, true)
+
+--- raw-blocky-dedent-firstline4 eval ---
+// The first line is not affected by dedent, and the middle lines don't consider
+// the whitespace prefix of the first line.
+#let raw = ```     test
+  test2
+  ```
+#test(raw.text, "    test\ntest2")
+#test(raw.block, true)
+
+--- raw-blocky-dedent-lastline eval ---
+#let raw = ```
+  test
+ ```
+#test(raw.text, " test")
+#test(raw.block, true)
+
+--- raw-blocky-dedent-lastline2 eval ---
+#let raw = ```
+  test
+  ```
+#test(raw.text, "test")
+#test(raw.block, true)
+
+--- raw-blocky-tab eval ---
+#let raw = {
+```
+	test
+```
+}
+#test(raw.text, "\ttest")
+#test(raw.block, true)
+
+--- raw-blocky-tab-dedent eval ---
+// This one is a bit problematic because there is a trailing tab below "test"
+// which the editor constantly wants to remove.
+#let raw = eval("```\n\ttest\n  \n ```")
+#test(raw.text, "test\n ")
+#test(raw.block, true)
+
+--- raw-extra-first-line-ws eval ---
+#let raw = eval("```   \n```")
+#test(raw.text, "")
+#test(raw.block, true)
+
 --- raw-tab-size paged ---
 #set raw(tab-size: 8)
 
@@ -91,7 +279,7 @@ Year	Month	Day
     (* x (factorial (- x 1)))))
 ```
 
---- raw-syntaxes-invalid-sublime-syntax paged ---
+--- raw-syntaxes-invalid-sublime-syntax eval ---
 // Prevent test parser from failing on "^---" line.
 #let sublime-syntax = ```yaml
 %YAML 1.2
@@ -107,6 +295,26 @@ contexts:
 
 // Error: 35-56 failed to parse syntax (Error while compiling regex '\': Parsing error at position 0: Backslash without following character)
 #raw("text", lang: "a", syntaxes: bytes(sublime-syntax))
+
+--- raw-syntaxes-types paged empty ---
+#let sublime-syntax = ```yaml
+%YAML 1.2
+```.text + "\n---\n" + ```yaml
+name: lang
+file_extensions:
+  - a
+scope: source
+contexts:
+  main:
+    - match: ''
+```.text
+
+#set raw(syntaxes: "/assets/syntaxes/SExpressions.sublime-syntax")
+#set raw(syntaxes: path("/assets/syntaxes/SExpressions.sublime-syntax"))
+#set raw(syntaxes: (
+  path("/assets/syntaxes/SExpressions.sublime-syntax"),
+  bytes(sublime-syntax),
+))
 
 --- raw-theme paged ---
 // Test code highlighting with custom theme.
@@ -163,7 +371,7 @@ b = 324923
   "#let f(x) = x\n#align(center, line(length: 1em))",
 ))
 
---- raw-align-invalid paged ---
+--- raw-align-invalid eval ---
 // Error: 17-20 expected `start`, `left`, `center`, `right`, or `end`, found top
 #set raw(align: top)
 
@@ -183,17 +391,24 @@ for i in range(10):
 ` or otherwise e.g. `print(j)`, are colored properly.
 
 --- raw-highlight-typ paged ---
+// Highlighting for Typst markup
+#set page(width: auto)
 ```typ
-= Chapter 1
+#set heading(numbering: "1.")
+= Chapter 1 <chap:1>
 #lorem(100)
 
 #let hi = "Hello World"
 #show heading: emph
+/ Chap: @chap:1[Chapter #hi]
+- *Chap:* ch--ap
++ _*Chap:*_ ch~ap
+1. _Chap:_ ch---ap
 ```
 
 --- raw-highlight-typc paged ---
+// Highlighting for Typst code
 #set page(width: auto)
-
 ```typ
 #set hello()
 #set hello()
@@ -221,33 +436,46 @@ for i in range(10):
 ```
 
 --- raw-highlight-typm paged ---
+// Highlighting for Typst math
 #set page(width: auto)
 ```typm
 1 + 2/3
-a^b
+sum_(i=1)^n i = (n(n+1))/2
+binom(n, k) = n!/(k!(n - k)!)
+2 / √(2pi) = sqrt(2) / √pi
+3 * (1 - 2) <= #(3 * (1 + 2))
+((a+b))/((c)^(d')_(e')_(f)'/(g)'/(h)!)
+[\(a+b\)]/{\(c\)^[d']_{e'}_[|f|]'/[g]'/[\|h\|]!}
+f_zeta(x), f_zeta(x)/1, f_zeta (x)
+pi.alt + pi^arrow.l.long.double - π = ???
+"string" - + * ::= & \
+|=> & [|define(x-y_z: #1, x::= y; xyz; 0)|]
+std.text(op("Red"), fill: red)
+#std.text(math.op("Red"), fill: red)
+```
+
+--- raw-highlight-typm-idents paged ---
+// Highlighting identifiers, field accesses and function calls in math
+#set page(width: auto)
+```typm
 hello
+hello-world
 hello()
 box[]
 hello.world
 hello.world()
+hello-world()
+hello_world()
 hello.my.world()
-f_zeta(x), f_zeta(x)/1
 emph(hello.my.world())
 emph(hello.my().world)
 emph(hello.my().world())
+emph (hello.my().world())
 #hello
 #hello()
 #hello.world
 #hello.world()
 #box[]
-```
-
---- raw-highlight-typm-extra paged ---
-// Math highlighting for strings, alignments, shorthands, and named args.
-#set page(width: auto)
-```typm
-"string" - + * ::= & \
-|=> & [|define(x: #y, x::= y)|]
 ```
 
 --- raw-highlight-rust paged ---
@@ -307,8 +535,9 @@ int main() {
 
 --- raw-highlight-html-jinja2 paged ---
 #set page(width: auto)
+// FUTURE: Convert to raw syntax when we re-enable non-identifier language tags
 
-```html.j2
+#raw(block: true, lang: "html.j2", ```
 <tbody>
   {% for row in data.rows %}
   <tr>
@@ -318,214 +547,7 @@ int main() {
   </tr>
   {% endfor %}
 </tbody>
-```
-
---- raw-blocky paged ---
-// Test various raw parsing edge cases.
-
-#let empty = (
-  name: "empty",
-  input: ``,
-  text: "",
-  block: false,
-)
-
-#let empty-spaces = (
-  name: "empty-spaces",
-  input: ```   ```,
-  text: "",
-  block: false,
-)
-
-#let empty-newlines = (
-  name: "empty-newlines",
-  input: ```
-
-
-```,
-  text: "\n",
-  block: true,
-)
-
-#let newlines-backtick = (
-  name: "newlines-backtick",
-  input: ```
-
-`
-
-```,
-  text: "\n`\n",
-  block: true,
-)
-
-#let backtick = (
-  name: "backtick",
-  input: ``` ` ```,
-  text: "`",
-  block: false,
-)
-
-#let lang-backtick = (
-  name: "lang-backtick",
-  input: ```js ` ```,
-  lang: "js",
-  text: "`",
-  block: false,
-)
-
-// The language tag stops on space
-#let lang-space = (
-  name: "lang-space",
-  input: ```js test ```,
-  lang: "js",
-  text: "test ",
-  block: false,
-)
-
-// The language tag stops on newline
-#let lang-newline = (
-  name: "lang-newline",
-  input: ```js
-test
-```,
-  lang: "js",
-  text: "test",
-  block: true,
-)
-
-// The first line and the last line are ignored
-#let blocky = (
-  name: "blocky",
-  input: {
-```
-test
-```
-},
-  text: "test",
-  block: true,
-)
-
-// A blocky raw should handle dedents
-#let blocky-dedent = (
-  name: "blocky-dedent",
-  input: {
-```
- test
- ```
-  },
-  text: "test",
-  block: true,
-)
-
-// When there is content in the first line, it should exactly eat a whitespace char.
-#let blocky-dedent-firstline = (
-  name: "blocky-dedent-firstline",
-  input: ``` test
-  ```,
-  text: "test",
-  block: true,
-)
-
-// When there is content in the first line, it should exactly eat a whitespace char.
-#let blocky-dedent-firstline2 = (
-  name: "blocky-dedent-firstline2",
-  input: ``` test
-```,
-  text: "test",
-  block: true,
-)
-
-// The first line is not affected by dedent, and the middle lines don't consider the whitespace prefix of the first line.
-#let blocky-dedent-firstline3 = (
-  name: "blocky-dedent-firstline3",
-  input: ``` test
-     test2
-  ```,
-  text: "test\n   test2",
-  block: true,
-)
-
-// The first line is not affected by dedent, and the middle lines don't consider the whitespace prefix of the first line.
-#let blocky-dedent-firstline4 = (
-  name: "blocky-dedent-firstline4",
-  input: ```     test
-  test2
-  ```,
-  text: "    test\ntest2",
-  block: true,
-)
-
-#let blocky-dedent-lastline = (
-  name: "blocky-dedent-lastline",
-  input: ```
-  test
- ```,
-  text: " test",
-  block: true,
-)
-
-#let blocky-dedent-lastline2 = (
-  name: "blocky-dedent-lastline2",
-  input: ```
-  test
-   ```,
-  text: "test",
-  block: true,
-)
-
-#let blocky-tab = (
-  name: "blocky-tab",
-  input: {
-```
-	test
-```
-},
-  text: "\ttest",
-  block: true,
-)
-
-// This one is a bit problematic because there is a trailing tab below "test"
-// which the editor constantly wants to remove.
-#let blocky-tab-dedent = (
-  name: "blocky-tab-dedent",
-  input: eval("```\n\ttest\n  \n ```"),
-  text: "test\n ",
-  block: true,
-)
-
-#let extra-first-line-ws = (
-  name: "extra-first-line-ws",
-  input: eval("```   \n```"),
-  text: "",
-  block: true,
-)
-
-#let cases = (
-  empty,
-  empty-spaces,
-  empty-newlines,
-  newlines-backtick,
-  backtick,
-  lang-backtick,
-  lang-space,
-  lang-newline,
-  blocky,
-  blocky-dedent,
-  blocky-dedent-firstline,
-  blocky-dedent-firstline2,
-  blocky-dedent-firstline3,
-  blocky-dedent-lastline,
-  blocky-dedent-lastline2,
-  blocky-tab,
-  blocky-tab-dedent,
-  extra-first-line-ws,
-)
-
-#for c in cases {
-  let block = c.block
-  assert.eq(c.text, c.input.text, message: "in point " + c.name + ", expect " + repr(c.text) + ", got " + repr(c.input.text) + "")
-  assert.eq(block, c.input.block, message: "in point " + c.name + ", expect " + repr(block) + ", got " + repr(c.input.block) + "")
-}
+```.text)
 
 --- raw-html html ---
 This is ```typ *inline*```.
@@ -611,7 +633,7 @@ print(x)
 print(y)
 ```
 
---- raw-line-scripting paged ---
+--- raw-line-scripting paged empty ---
 
 // Test line extraction works.
 
@@ -753,17 +775,17 @@ a b c --------------------
 #let hi = "你好world"
 ```
 
---- issue-6559-equality-between-raws paged ---
+--- issue-6559-equality-between-raws eval ---
 
 #test(`foo`, `foo`)
 #assert.ne(`foo`, `bar`)
 
---- raw-theme-set-to-auto paged ---
+--- raw-theme-types paged ---
 ```typ
 #let hi = "Hello World"
 ```
 
-#set raw(theme: "/assets/themes/halcyon.tmTheme")
+#set raw(theme: path("/assets/themes/halcyon.tmTheme"))
 ```typ
 #let hi = "Hello World"
 ```
@@ -811,11 +833,11 @@ hi:
   What is this?: This is incredible text!
 ```
 
---- raw-unclosed paged ---
+--- raw-unclosed eval ---
 // Test unterminated raw text.
 //
 // Note: This test should be the final one in the file because it messes up
 // syntax highlighting.
 //
-// Error: 1-2:1 unclosed raw text
+// Error: 1:1-2:1 unclosed raw text
 `endless

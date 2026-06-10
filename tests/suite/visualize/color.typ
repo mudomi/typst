@@ -1,6 +1,6 @@
 // Test color modification methods.
 
---- color-mix paged ---
+--- color-mix eval ---
 // Compare both ways.
 #test-repr(rgb(0%, 30.2%, 70.2%), rgb("004db3"))
 
@@ -37,8 +37,8 @@
 // Error: 6-51 cannot mix more than two colors in a hue-based space
 #rgb(color.mix(red, blue, white, space: color.hsl))
 
---- color-conversion paged ---
-// Test color conversion method kinds
+--- color-conversion eval ---
+// Test color conversion method kinds.
 #test(rgb(rgb(10, 20, 30)).space(), rgb)
 #test(color.linear-rgb(rgb(10, 20, 30)).space(), color.linear-rgb)
 #test(oklab(rgb(10, 20, 30)).space(), oklab)
@@ -114,8 +114,8 @@
 #test(rgb(1, 2, 3).to-hex(), "#010203")
 #test(rgb(1, 2, 3, 4).to-hex(), "#01020304")
 #test(luma(40).to-hex(), "#282828")
-#test-repr(cmyk(4%, 5%, 6%, 7%).to-hex(), "#e0dcda")
-#test-repr(rgb(cmyk(4%, 5%, 6%, 7%)), rgb(87.84%, 86.27%, 85.49%, 100%))
+#test-repr(cmyk(4%, 5%, 6%, 7%).to-hex(), "#e2dcda")
+#test-repr(rgb(cmyk(4%, 5%, 6%, 7%)), rgb(226, 220, 218))
 #test-repr(rgb(luma(40%)), rgb(40%, 40%, 40%))
 #test-repr(cmyk(luma(40)), cmyk(63.24%, 57.33%, 56.49%, 75.88%))
 #test-repr(cmyk(rgb(1, 2, 3)), cmyk(66.67%, 33.33%, 0%, 98.82%))
@@ -133,7 +133,7 @@
 #test-repr(oklch(rgb(1, 2, 3)), oklch(8.23%, 0.008, 240.75deg, 100%))
 
 --- color-spaces paged ---
-// The different color spaces
+// The different color spaces.
 #let col = rgb(50%, 64%, 16%)
 #box(square(size: 9pt, fill: col))
 #box(square(size: 9pt, fill: rgb(col)))
@@ -145,15 +145,15 @@
 #box(square(size: 9pt, fill: color.hsl(col)))
 #box(square(size: 9pt, fill: color.hsv(col)))
 
---- color-space paged ---
+--- color-space eval ---
 // Test color kind method.
 #test(rgb(1, 2, 3, 4).space(), rgb)
 #test(cmyk(4%, 5%, 6%, 7%).space(), cmyk)
 #test(luma(40).space(), luma)
 #test(rgb(1, 2, 3, 4).space() != luma, true)
 
---- color-components paged ---
-// Test color '.components()' without conversions
+--- color-components eval ---
+// Test color '.components()' without conversions.
 
 #let test-components(col, ref, has-alpha: true) = {
   // Perform an approximate scalar comparison.
@@ -185,50 +185,50 @@
 // Test gray color conversion.
 #stack(dir: ltr, rect(fill: luma(0)), rect(fill: luma(80%)))
 
---- color-rgb-out-of-range paged ---
+--- color-rgb-out-of-range eval ---
 // Error for values that are out of range.
 // Error: 11-14 number must be between 0 and 255
 #test(rgb(-30, 15, 50))
 
---- color-rgb-bad-string paged ---
+--- color-rgb-bad-string eval ---
 // Error: 6-11 color string contains non-hexadecimal letters
 #rgb("lol")
 
---- color-rgb-missing-argument-red paged ---
+--- color-rgb-missing-argument-red eval ---
 // Error: 2-7 missing argument: red component
 #rgb()
 
---- color-rgb-missing-argument-blue paged ---
+--- color-rgb-missing-argument-blue eval ---
 // Error: 2-11 missing argument: blue component
 #rgb(0, 1)
 
---- color-rgb-bad-type paged ---
+--- color-rgb-bad-type eval ---
 // Error: 21-26 expected integer or ratio, found boolean
 #rgb(10%, 20%, 30%, false)
 
---- color-luma-unexpected-argument paged ---
+--- color-luma-unexpected-argument eval ---
 // Error: 10-20 unexpected argument: key
 #luma(1, key: "val")
 
---- color-mix-bad-amount-type paged ---
+--- color-mix-bad-amount-type eval ---
 // Error: 12-24 expected float or ratio, found string
 // Error: 26-39 expected float or ratio, found string
 #color.mix((red, "yes"), (green, "no"), (green, 10%))
 
---- color-mix-bad-value paged ---
+--- color-mix-bad-value eval ---
 // Error: 12-23 expected a color or color-weight pair
 #color.mix((red, 1, 2))
 
---- color-mix-bad-space-type paged ---
-// Error: 31-38 expected `rgb`, `luma`, `cmyk`, `oklab`, `oklch`, `color.linear-rgb`, `color.hsl`, or `color.hsv`, found string
+--- color-mix-bad-space-type eval ---
+// Error: 31-38 expected `rgb`, `luma`, `cmyk`, `oklab`, `oklch`, `color.linear-rgb`, `color.hsl`, `color.hsv`, or spot colorant, found string
 #color.mix(red, green, space: "cyber")
 
---- color-mix-bad-space-value-1 paged ---
-// Error: 31-36 expected `rgb`, `luma`, `cmyk`, `oklab`, `oklch`, `color.linear-rgb`, `color.hsl`, or `color.hsv`
+--- color-mix-bad-space-value-1 eval ---
+// Error: 31-36 expected `rgb`, `luma`, `cmyk`, `oklab`, `oklch`, `color.linear-rgb`, `color.hsl`, `color.hsv`, or spot colorant
 #color.mix(red, green, space: image)
 
---- color-mix-bad-space-value-2 paged ---
-// Error: 31-41 expected `rgb`, `luma`, `cmyk`, `oklab`, `oklch`, `color.linear-rgb`, `color.hsl`, or `color.hsv`
+--- color-mix-bad-space-value-2 eval ---
+// Error: 31-41 expected `rgb`, `luma`, `cmyk`, `oklab`, `oklch`, `color.linear-rgb`, `color.hsl`, `color.hsv`, or spot colorant
 #color.mix(red, green, space: calc.round)
 
 --- color-cmyk-ops paged ---
@@ -255,7 +255,7 @@
 #box(square(size: 9pt, fill: oklch(50%, 0.5, 0deg)))
 
 --- color-rotate-hue paged ---
-// Test hue rotation
+// Test hue rotation.
 #let col = rgb(50%, 64%, 16%)
 
 // Oklch
@@ -274,7 +274,7 @@
 }
 
 --- color-saturation paged ---
-// Test saturation
+// Test saturation.
 #let col = color.hsl(180deg, 0%, 50%)
 #for x in range(0, 11) {
   box(square(size: 9pt, fill: col.saturate(x * 10%)))
@@ -295,13 +295,13 @@
   box(square(size: 9pt, fill: col.desaturate(x * 10%)))
 }
 
---- color-luma-ops paged ---
+--- color-luma-ops eval ---
 // Test gray color modification.
 #test-repr(luma(20%).lighten(50%), luma(60%))
 #test-repr(luma(80%).darken(20%), luma(64%))
 #test-repr(luma(80%).negate(space: luma), luma(20%))
 
---- color-transparentize paged ---
+--- color-transparentize eval ---
 // Test alpha modification.
 #test-repr(luma(100%, 100%).transparentize(50%), luma(100%, 50%))
 #test-repr(luma(100%, 100%).transparentize(75%), luma(100%, 25%))
@@ -310,7 +310,7 @@
 #test-repr(luma(100%, 40%).transparentize(-50%), luma(100%, 70%))
 #test-repr(luma(100%, 0%).transparentize(-100%), luma(100%, 100%))
 
---- color-opacify paged ---
+--- color-opacify eval ---
 #test-repr(luma(100%, 50%).opacify(50%), luma(100%, 75%))
 #test-repr(luma(100%, 20%).opacify(100%), luma(100%, 100%))
 #test-repr(luma(100%, 100%).opacify(250%), luma(100%, 100%))
@@ -327,3 +327,92 @@
 // output with a PDF comparison script.
 #rect(fill: red.transparentize(50%))
 #image("/assets/images/tiger.jpg", width: 45pt)
+
+--- spot-color-basic paged ---
+// Test basic spot color creation and rendering.
+#let pantone = color.spot("PANTONE 2221 C", eastern)
+#let tinted = pantone.tint(80%)
+#box(square(size: 20pt, fill: tinted))
+
+--- spot-color-tints paged ---
+// Test different tint levels of the same spot colorant.
+#let pantone = color.spot("PANTONE 185 C", rgb(89.4%, 0.7%, 17%))
+#box(square(size: 15pt, fill: pantone.tint(100%)))
+#box(square(size: 15pt, fill: pantone.tint(75%)))
+#box(square(size: 15pt, fill: pantone.tint(50%)))
+#box(square(size: 15pt, fill: pantone.tint(25%)))
+#box(square(size: 15pt, fill: pantone.tint(0%)))
+
+--- spot-color-none paged ---
+// Test spot color with name set to none.
+#let varnish = color.spot(none, luma(0%))
+#let layer = varnish.tint(100%)
+#box(square(size: 20pt, fill: layer))
+
+--- spot-color-components eval ---
+// Test spot color components method.
+#let pantone = color.spot("PANTONE 2221 C", eastern)
+#let tinted = pantone.tint(80%)
+#test(tinted.components(), (80%,))
+#test(tinted.components(alpha: false), (80%,))
+
+--- spot-color-tint-out-of-range-negative eval ---
+#let pantone = color.spot("PANTONE 2221 C", eastern)
+// Error: 15-19 spot color tint must be positive
+#pantone.tint(-10%)
+
+--- spot-color-tint-out-of-range-large eval ---
+#let pantone = color.spot("PANTONE 2221 C", eastern)
+// Error: 15-19 spot color tint must not exceed 100%
+#pantone.tint(120%)
+
+--- spot-color-lighten paged ---
+// Test lighten on spot colors.
+#let pantone = color.spot("PANTONE 185 C", rgb(89.4%, 0.7%, 17%))
+#let base = pantone.tint(80%)
+#let light = base.lighten(25%)
+#box(square(size: 15pt, fill: base))
+#box(square(size: 15pt, fill: light))
+
+--- spot-color-darken paged ---
+// Test darken on spot colors.
+#let pantone = color.spot("PANTONE 185 C", rgb(89.4%, 0.7%, 17%))
+#let base = pantone.tint(50%)
+#let dark = base.darken(25%)
+#box(square(size: 15pt, fill: base))
+#box(square(size: 15pt, fill: dark))
+
+--- spot-color-negate eval ---
+// Test negate on spot colors.
+#let pantone = color.spot("PANTONE 185 C", rgb(89.4%, 0.7%, 17%))
+#let base = pantone.tint(70%)
+#let neg = base.negate()
+#let eps = 0.0001 * 100%
+#let components = neg.components()
+#if components.len() != 1 { panic("expected 1 component, got " + components.len()) }
+#if calc.abs(components.at(0) - 30%) > eps { panic("spot color negation failed") }
+
+--- spot-colorant-none paged ---
+#let c = color.spot(none, red)
+#box(square(size: 15pt, fill: c.tint(50%)))
+
+--- spot-colorant-all paged ---
+#let c = color.spot("all", blue)
+#box(square(size: 15pt, fill: c.tint(75%)))
+
+--- spot-color-as-fallback eval ---
+#let pantone = color.spot("PANTONE 2221 C", eastern)
+// Error: 30-47 spot color found where process color is required
+#color.spot("PANTONE 185 C", pantone.tint(50%))
+
+--- spot-colorant-as-fallback eval ---
+#let pantone = color.spot("PANTONE 2221 C", eastern)
+// Error: 30-37 expected color, found spot colorant
+#color.spot("PANTONE 185 C", pantone)
+
+--- spot-colorant-inconsistent-fallback pdf pdfstandard(a-2a) ---
+// Error: spot colorant `"PANTONE 185 C"` appeared with multiple distinct fallback colors
+// Hint: define a particular spot colorant once and store it in a variable to reuse it later
+#set document(date: datetime(year: 1970, month: 1, day: 1))
+#rect(fill: color.spot("PANTONE 185 C", teal).tint(100%))
+#rect(fill: color.spot("PANTONE 185 C", yellow).tint(100%))

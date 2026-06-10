@@ -1,7 +1,6 @@
 //! Source file management.
 
 use std::fmt::{self, Debug, Formatter};
-use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -9,23 +8,27 @@ use typst_utils::LazyHash;
 
 use crate::lines::Lines;
 use crate::reparser::reparse;
-use crate::{FileId, LinkedNode, Span, SyntaxNode, VirtualPath, parse};
+use crate::{
+    FileId, LinkedNode, RootedPath, Span, SpanNumber, SubRange, SyntaxNode, VirtualPath,
+    VirtualRoot, parse,
+};
 
-/// A source file.
+/// A Typst source file containing the full source text, a mapping from byte
+/// indices to lines/columns, and the parsed syntax tree.
 ///
 /// All line and column indices start at zero, just like byte indices. Only for
 /// user-facing display, you should add 1 to them.
 ///
 /// Values of this type are cheap to clone and hash.
-#[derive(Clone)]
-pub struct Source(Arc<SourceInner>);
+#[derive(Clone, Hash)]
+pub struct Source(Arc<LazyHash<SourceInner>>);
 
 /// The internal representation of a [`Source`].
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 struct SourceInner {
     id: FileId,
-    root: LazyHash<SyntaxNode>,
-    lines: LazyHash<Lines<String>>,
+    root: SyntaxNode,
+    lines: Lines<String>,
 }
 
 impl Source {
@@ -34,16 +37,21 @@ impl Source {
         let _scope = typst_timing::TimingScope::new("create source");
         let mut root = parse(&text);
         root.numberize(id, Span::FULL).unwrap();
-        Self(Arc::new(SourceInner {
-            id,
-            lines: LazyHash::new(Lines::new(text)),
-            root: LazyHash::new(root),
-        }))
+        Self(Arc::new(LazyHash::new(SourceInner { id, lines: Lines::new(text), root })))
     }
 
     /// Create a source file without a real id and path, usually for testing.
     pub fn detached(text: impl Into<String>) -> Self {
-        Self::new(FileId::new(None, VirtualPath::new("main.typ")), text.into())
+        Self::new(
+            RootedPath::new(VirtualRoot::Project, VirtualPath::new("main.typ").unwrap())
+                .intern(),
+            text.into(),
+        )
+    }
+
+    /// Create a new source file with an already created syntax tree.
+    pub fn with_root(id: FileId, text: String, root: SyntaxNode) -> Self {
+        Self(Arc::new(LazyHash::new(SourceInner { id, lines: Lines::new(text), root })))
     }
 
     /// The root node of the file's untyped syntax tree.
@@ -94,7 +102,7 @@ impl Source {
     /// The method panics if the `replace` range is out of bounds.
     #[track_caller]
     pub fn edit(&mut self, replace: Range<usize>, with: &str) -> Range<usize> {
-        let inner = Arc::make_mut(&mut self.0);
+        let inner = &mut **Arc::make_mut(&mut self.0);
 
         // Update the text and lines.
         inner.lines.edit(replace.clone(), with);
@@ -107,16 +115,30 @@ impl Source {
     ///
     /// Returns `None` if the span does not point into this source file.
     pub fn find(&self, span: Span) -> Option<LinkedNode<'_>> {
+        if span.id() != Some(self.id()) {
+            return None;
+        }
         LinkedNode::new(self.root()).find(span)
     }
 
-    /// Get the byte range for the given span in this file.
+    /// Get the byte range for the given span number (and optional sub-range) in
+    /// this file.
     ///
-    /// Returns `None` if the span does not point into this source file.
-    ///
-    /// Typically, it's easier to use `WorldExt::range` instead.
-    pub fn range(&self, span: Span) -> Option<Range<usize>> {
-        Some(self.find(span)?.range())
+    /// The main way to get a [`SpanNumber`] is by unpacking a span with
+    /// [`Span::get`], but it's likely easier to use `WorldExt::range` instead.
+    pub fn range(
+        &self,
+        num: SpanNumber,
+        sub_range: Option<SubRange>,
+    ) -> Option<Range<usize>> {
+        let overall = LinkedNode::new(self.root()).find_number(num)?.range();
+        if let Some(sub_range) = sub_range {
+            let range = sub_range.to_absolute(overall.start);
+            assert!(range.end <= overall.end);
+            Some(range)
+        } else {
+            Some(overall)
+        }
     }
 }
 
@@ -126,16 +148,35 @@ impl Debug for Source {
     }
 }
 
-impl Hash for Source {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.id.hash(state);
-        self.0.lines.hash(state);
-        self.0.root.hash(state);
-    }
-}
-
 impl AsRef<str> for Source {
     fn as_ref(&self) -> &str {
         self.text()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Source;
+    use crate::{LinkedNode, Side, Span, SubRange};
+
+    #[test]
+    fn test_source_sub_ranges() {
+        let text = "= head <label>";
+        let source = Source::detached(text);
+        let get = |span: Span, sub_range| {
+            let num = crate::SpanNumber(span.number());
+            &text[source.range(num, sub_range).unwrap()]
+        };
+        let head = LinkedNode::new(source.root()).leaf_at(2, Side::After).unwrap().span();
+        assert_eq!(get(head, None), "head");
+        assert_eq!(get(head, SubRange::new(1, 3)), "ea");
+        assert_eq!(get(head, SubRange::new(0, 1)), "h");
+        assert_eq!(get(head, SubRange::new(0, 4)), "head");
+        assert_eq!(get(head, SubRange::new(3, 4)), "d");
+        let root = source.root().span();
+        assert_eq!(get(root, None), text);
+        assert_eq!(get(root, SubRange::new(3, 10)), "ead <la");
+        assert_eq!(get(root, SubRange::new(0, 10)), "= head <la");
+        assert_eq!(get(root, SubRange::new(3, 14)), "ead <label>");
     }
 }

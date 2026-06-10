@@ -51,7 +51,7 @@ $ A = 1 $ <eq2>
 // Test ambiguous reference.
 = Introduction <arrgh>
 
-// Error: 1-7 label `<arrgh>` occurs both in the document and its bibliography
+// Error: 1-7 label `<arrgh>` occurs both in the document and a bibliography
 // Hint: 1-7 change either the heading's label or the bibliography key to resolve the ambiguity
 @arrgh
 #bibliography("/assets/bib/works.bib")
@@ -82,7 +82,7 @@ Text seen on #ref(<text>, form: "page", supplement: "Page").
 #ref(<quark>, form: "page")
 #bibliography("/assets/bib/works.bib")
 
---- issue-4536-non-whitespace-before-ref paged ---
+--- issue-4536-non-whitespace-before-ref paged empty ---
 // Test reference with non-whitespace before it.
 #figure[] <1>
 #test([(#ref(<1>))], [(@1)])
@@ -92,7 +92,7 @@ Text seen on #ref(<text>, form: "page", supplement: "Page").
 // and not produce a reference to a label with an empty name.
 @
 
---- ref-function-empty-label paged ---
+--- ref-function-empty-label eval ---
 // using ref() should also not be possible
 // Error: 6-7 unexpected less-than operator
 // Error: 7-8 unexpected greater-than operator

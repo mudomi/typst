@@ -10,13 +10,13 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use chrono::{DateTime, Utc};
 use clap::builder::styling::{AnsiColor, Effects};
 use clap::builder::{Styles, TypedValueParser, ValueParser};
 use clap::{ArgAction, Args, ColorChoice, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell;
 use semver::Version;
 use serde::Serialize;
+use typst_utils::display_possible_values;
 
 /// The character typically used to separate path components
 /// in environment variables.
@@ -50,7 +50,11 @@ const STYLES: Styles = Styles::styled()
 #[derive(Debug, Clone, Parser)]
 #[clap(
     name = "typst",
-    version = format!("{} ({})", crate::typst_version(), crate::typst_commit_sha()),
+    version = format!(
+        "{} ({})",
+        typst_utils::version().raw(),
+        typst_utils::display_commit(typst_utils::version().commit()),
+    ),
     author,
     help_template = HELP_TEMPLATE,
     after_help = AFTER_HELP,
@@ -115,7 +119,7 @@ pub struct CompileCommand {
     pub args: CompileArgs,
 }
 
-/// Compiles an input file into a supported output format.
+/// Watches an input file and recompiles on changes.
 #[derive(Debug, Clone, Parser)]
 pub struct WatchCommand {
     /// Arguments for compilation.
@@ -273,7 +277,8 @@ pub struct CompletionsCommand {
 pub struct InfoCommand {
     /// The format to serialize in, if it should be machine-readable.
     ///
-    /// If no format is passed the output is displayed human-readable.
+    /// If no format is passed the output is displayed human-readable. Note that
+    /// human-readable format truncates the build commit hash value.
     #[arg(long = "format", short = 'f')]
     pub format: Option<SerializationFormat>,
 
@@ -314,6 +319,14 @@ pub struct CompileArgs {
     #[clap(flatten)]
     pub world: WorldArgs,
 
+    /// Whether to pretty-print produced output.
+    ///
+    /// This formats the output in a more human-readable, but less
+    /// space-efficient way. Affects HTML, SVG, and PDF export, but not PNG
+    /// export.
+    #[arg(long = "pretty")]
+    pub pretty: bool,
+
     /// Which pages to export. When unspecified, all pages are exported.
     ///
     /// Pages to export are separated by commas, and can be either simple page
@@ -341,7 +354,7 @@ pub struct CompileArgs {
 
     /// The PPI (pixels per inch) to use for PNG export.
     #[arg(long = "ppi", default_value_t = 144.0)]
-    pub ppi: f32,
+    pub ppi: f64,
 
     /// File path to which a Makefile with the current compilation's
     /// dependencies will be written.
@@ -377,7 +390,7 @@ pub struct CompileArgs {
     /// https://ui.perfetto.dev. It does not contain any sensitive information
     /// apart from file names and line numbers.
     #[arg(long = "timings", value_name = "OUTPUT_JSON")]
-    pub timings: Option<Option<PathBuf>>,
+    pub timings: Option<PathBuf>,
 }
 
 /// Arguments for the construction of a world. Shared by compile, watch, eval, and
@@ -411,10 +424,9 @@ pub struct WorldArgs {
     #[clap(
         long = "creation-timestamp",
         env = "SOURCE_DATE_EPOCH",
-        value_name = "UNIX_TIMESTAMP",
-        value_parser = parse_source_date_epoch,
+        value_name = "UNIX_TIMESTAMP"
     )]
-    pub creation_timestamp: Option<DateTime<Utc>>,
+    pub creation_timestamp: Option<i64>,
 }
 
 /// Arguments for configuration the process of compilation itself.
@@ -472,7 +484,7 @@ pub struct FontArgs {
     pub ignore_system_fonts: bool,
 
     /// Ensures fonts embedded into Typst won't be considered.
-    #[cfg(feature = "embed-fonts")]
+    #[cfg(feature = "embedded-fonts")]
     #[arg(long, env = "TYPST_IGNORE_EMBEDDED_FONTS")]
     pub ignore_embedded_fonts: bool,
 }
@@ -495,19 +507,6 @@ pub struct ServerArgs {
     /// Defaults to the first free port in the range 3000-3005.
     #[clap(long)]
     pub port: Option<u16>,
-}
-
-macro_rules! display_possible_values {
-    ($ty:ty) => {
-        impl Display for $ty {
-            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-                self.to_possible_value()
-                    .expect("no values are skipped")
-                    .get_name()
-                    .fmt(f)
-            }
-        }
-    };
 }
 
 /// An input that is either stdin or a real path.
@@ -587,13 +586,14 @@ impl Write for OpenOutput<'_> {
     }
 }
 
-/// Which format to use for the generated output file.
+/// Which format to use for the generated output.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, ValueEnum)]
 pub enum OutputFormat {
     Pdf,
     Png,
     Svg,
     Html,
+    Bundle,
 }
 
 impl OutputFormat {
@@ -627,6 +627,8 @@ pub enum Target {
     Paged,
     /// HTML.
     Html,
+    /// Bundle.
+    Bundle,
 }
 
 display_possible_values!(Target);
@@ -645,6 +647,7 @@ display_possible_values!(DiagnosticFormat);
 #[derive(Debug, Copy, Clone, Eq, PartialEq, ValueEnum, Serialize)]
 pub enum Feature {
     Html,
+    Bundle,
     A11yExtras,
 }
 
@@ -804,13 +807,4 @@ fn parse_sys_input_pair(raw: &str) -> Result<(String, String), String> {
     }
     let val = val.trim().to_owned();
     Ok((key, val))
-}
-
-/// Parses a UNIX timestamp according to <https://reproducible-builds.org/specs/source-date-epoch/>
-fn parse_source_date_epoch(raw: &str) -> Result<DateTime<Utc>, String> {
-    let timestamp: i64 = raw
-        .parse()
-        .map_err(|err| format!("timestamp must be decimal integer ({err})"))?;
-    DateTime::from_timestamp(timestamp, 0)
-        .ok_or_else(|| "timestamp out of range".to_string())
 }

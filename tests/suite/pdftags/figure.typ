@@ -72,8 +72,8 @@ Ein Paragraph.
 ]
 
 --- figure-tags-only-marked-content-missing-alt pdftags pdfstandard(ua-1) ---
-// Error: 2-3:2 PDF/UA-1 error: missing alt text
-// Hint: 2-3:2 make sure your images and equations have alt text
+// Error: 1:2-3:2 PDF/UA-1 error: missing alt text
+// Hint: 1:2-3:2 make sure your images and equations have alt text
 #figure[
   #rect(fill: red)
 ]
@@ -104,3 +104,9 @@ Ein Paragraph.
 // Hint: 4-38 avoid manually calling `figure.caption`
   #figure.caption[Additional caption]
 ]
+
+--- figure-tags-bbox-of-square-with-stroke pdftags pdfstandard(ua-1) ---
+#figure(
+  alt: "A square with a red stroke",
+  square(size: 60pt, stroke: 10pt + red)
+)

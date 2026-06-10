@@ -225,7 +225,7 @@ impl Tracing {
         let mut result = Curve::new();
 
         let centered = centered_pattern.cloned().unwrap_or_else(|| center_pattern(pattern));
-        let pattern_bbox_size = centered.bbox_size();
+        let pattern_bbox_size = centered.bbox(None).size();
         let pattern_width = pattern_bbox_size.x.to_raw();
 
         if pattern_width <= 0.0 || skeleton_length <= 0.0 {
@@ -288,7 +288,7 @@ impl Tracing {
         let mut result = Curve::new();
 
         let centered = centered_pattern.cloned().unwrap_or_else(|| center_pattern(pattern));
-        let pattern_bbox_size = centered.bbox_size();
+        let pattern_bbox_size = centered.bbox(None).size();
         let pattern_width = pattern_bbox_size.x.to_raw();
 
         if pattern_width <= 0.0 || skeleton_length <= 0.0 {
@@ -633,7 +633,7 @@ fn sample_pattern_parametrically(pattern: &Curve, num_samples: usize) -> Vec<(f6
 
     let mut samples = Vec::with_capacity(num_samples + 1);
 
-    let pattern_bbox = pattern.bbox_size();
+    let pattern_bbox = pattern.bbox(None).size();
     let pattern_width = pattern_bbox.x.to_raw();
 
     if pattern_width <= 0.0 {
@@ -737,7 +737,7 @@ fn center_pattern(pattern: &Curve) -> Curve {
         return Curve::new();
     }
 
-    let bbox = pattern.bbox();
+    let bbox = pattern.bbox(None);
     if bbox.size().x == Abs::zero() || bbox.size().y == Abs::zero() {
         return Curve(pattern.0.clone());
     }

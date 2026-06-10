@@ -1,4 +1,4 @@
---- measure paged ---
+--- measure paged empty ---
 // Test `measure`.
 #let f(lo, hi) = context {
   let h = measure[Hello].height
@@ -8,7 +8,7 @@
 #text(10pt, f(6pt, 8pt))
 #text(20pt, f(13pt, 14pt))
 
---- measure-given-area paged ---
+--- measure-given-area paged empty ---
 // Test `measure` given an area.
 #let text = lorem(100)
 
@@ -58,8 +58,9 @@
 --- measure-citation-in-flow-different-span paged ---
 // When the citation has a different span, it stops working.
 #context {
-  // Error: 22-29 cannot format citation in isolation
-  // Hint: 22-29 check whether this citation is measured without being inserted into the document
+  // Error: 22-29 citation could not be located
+  // Hint: 22-29 this citation is not stably present in the document
+  // Hint: 22-29 this can be caused by measurement or introspection
   let size = measure[@netwok]
   place(line(length: size.width))
   v(1mm)
@@ -81,26 +82,49 @@
 #show bibliography: none
 #bibliography("/assets/bib/works.bib")
 
---- measure-counter-multiple-times paged ---
+--- measure-counter paged empty ---
 // When the thing we measure appears multiple times, we measure as if it was
 // the first one.
 #context {
   let c = counter("c")
-  let u(n) = c.update(n)
   let it = context c.get().first() * h(1pt)
-  let size = measure(it)
-  table(columns: 5, u(17), it, u(1), it, u(5))
-  [#size.width] // 17pt
+  c.update(42) + it
+  metadata(measure(it).width)
 }
+#context test(query(metadata).first().value, 42pt)
 
---- issue-5180-measure-inline-math-bounds paged ---
+--- measure-counter-bundle bundle ---
+// Ensure that introspector-assisted location assignment works in bundle export.
+// This tests how document introspectors are combined into a bundle
+// introspector.
+#document("main.pdf", context {
+  let c = counter("c")
+  let it = context c.get().first() * h(1pt)
+  c.update(42) + it
+  metadata(measure(it).width)
+})
+#context test(query(metadata).first().value, 42pt)
+
+--- measure-counter-multiple-times paged empty ---
+// When the thing we measure appears multiple times, we measure as if it was
+// the first one.
+#context {
+  let c = counter("c")
+  let it = context c.get().first() * h(1pt)
+  let u(n) = c.update(n)
+  grid(columns: 5, u(17), it, u(1), it, u(5))
+  metadata(measure(it).width)
+}
+#context test(query(metadata).first().value, 17pt)
+
+--- issue-5180-measure-inline-math-bounds paged empty ---
 #context {
   let height = measure(text(top-edge: "bounds", $x$)).height
   assert(height > 4pt)
   assert(height < 5pt)
 }
 
---- measure-html html ---
+--- measure-html html empty ---
 #context {
   let (width, height) = measure(image("/assets/images/monkey.svg"))
   test(width, 36pt)

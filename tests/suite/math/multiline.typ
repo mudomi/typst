@@ -1,54 +1,100 @@
 // Test multiline math.
 
---- math-align-basic paged ---
+--- math-align-basic paged html ---
 // Test basic alignment.
 $ x &= x + y \
     &= x + 2z \
     &= sum x dot 2z $
 
---- math-align-wider-first-column paged ---
+--- math-align-wider-first-column paged html ---
 // Test text before first alignment point.
 $ x + 1 &= a^2 + b^2 \
       y &= a + b^2 \
       z &= alpha dot beta $
 
---- math-align-aligned-in-source paged ---
+--- math-align-aligned-in-source paged html ---
 // Test space between inner alignment points.
 $ a + b &= 2 + 3 &= 5 \
       b &= c     &= 3 $
 
---- math-align-cases paged ---
+--- math-align-cases paged html ---
 // Test in case distinction.
 $ f := cases(
   1 + 2 &"iff" &x,
   3     &"if"  &y,
 ) $
 
---- math-align-lines-mixed paged ---
+--- math-align-lines-mixed paged html ---
 // Test mixing lines with and some without alignment points.
 $ "abc" &= c \
    &= d + 1 \
    = x $
 
---- math-attach-subscript-multiline paged ---
+--- math-align-spacing paged ---
+// Test how spacing is inserted around alignment points.
+#set page(width: auto)
+#grid(
+  columns: 2,
+  stroke: 1pt,
+  inset: 1em,
+  $
+    a & + b + & c \
+    a & + b   &   & e & + d \
+    a & + b + & c & e & + d \
+      &       & c &   & + d \
+      & = 0
+  $,
+  $
+    a & + b + & c \
+    a & + b   &   & e & + d \
+    a & + b + & c &   & + d \
+      &       & c & e & + d \
+      & = 0
+  $,
+
+  $
+    a & + b + & c \
+    a & + b   &   &   & + d \
+    a & + b + & c & e & + d \
+      &       & c & e & + d \
+      & = 0
+  $,
+  $
+    a & + b + & c \
+    a & + b   &   & e & + d \
+    a & + b + & c & e & + d \
+      &       & c & e & + d \
+      & = 0
+  $,
+)
+
+--- math-align-spacing-ignorant paged ---
+// Test how ignorant content affects spacing around alignment points.
+#let p = place[]
+$
+  a + & b + & c & e &    + d \
+  a + &     & c &   & #p + d
+$
+
+--- math-attach-subscript-multiline paged html ---
 // Test multiline subscript.
 $ sum_(n in NN \ n <= 5) n = (5(5+1))/2 = 15 $
 
---- math-multiline-no-trailing-linebreak paged ---
+--- math-multiline-no-trailing-linebreak paged html ---
 // Test no trailing line break.
 $
 "abc" &= c
 $
 No trailing line break.
 
---- math-multiline-trailing-linebreak paged ---
+--- math-multiline-trailing-linebreak paged html ---
 // Test single trailing line break.
 $
 "abc" &= c \
 $
 One trailing line break.
 
---- math-multiline-multiple-trailing-linebreaks paged ---
+--- math-multiline-multiple-trailing-linebreaks paged html ---
 // Test multiple trailing line breaks.
 $
 "abc" &= c \ \ \
@@ -105,7 +151,7 @@ Multiple trailing line breaks.
 #hrule(90pt)$<)$\
 #hrule(95pt)$<)$
 
---- math-linebreaking-empty paged ---
+--- math-linebreaking-empty paged html ---
 // Verify empty rows are handled ok.
 $ $\
 Nothing: $ $, just empty.
@@ -150,12 +196,18 @@ $ a + b $
 Shouldn't overflow:
 $ a + b $
 
---- issue-5113-pagebreaking-empty paged ---
+--- math-multiline-string paged html ---
+$ "a\nb\n\n\n" "a\nb\n\n" "a\nb\n" "a\nb" $
+
+--- math-multiline-string-alignment paged html ---
+$ "L\n\n""L\n""L" $
+
+--- issue-5113-pagebreaking-empty paged empty ---
 // Test empty breakable equations.
 #show math.equation: set block(breakable: true)
 #math.equation(block: true, [])
 
---- issue-1948-math-text-break paged ---
+--- issue-1948-math-text-break paged html ---
 // Test text with linebreaks in math.
 $ x := "a\nb\nc\nd\ne" $
 

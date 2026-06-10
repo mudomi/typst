@@ -82,15 +82,15 @@ Another text.
 #show heading: it => it.page
 = Heading
 
---- show-text-element-discard paged ---
+--- show-text-element-discard paged empty ---
 #show text: none
 Hey
 
---- show-selector-not-an-element-function paged ---
+--- show-selector-not-an-element-function eval ---
 // Error: 7-12 only element functions can be used as selectors
 #show upper: it => {}
 
---- show-selector-shadowed-builtin paged ---
+--- show-selector-shadowed-builtin eval ---
 #let heading = 0
 
 // Error: 7-14 expected symbol, string, label, function, regex, or selector, found integer
@@ -102,16 +102,16 @@ Hey
 #show std.heading: it => text(fill: red, it)
 = #heading
 
---- show-bad-replacement-type paged ---
+--- show-bad-replacement-type eval ---
 // Error: 16-20 expected content or function, found integer
 #show heading: 1234
 = Heading
 
---- show-bad-selector-type paged ---
+--- show-bad-selector-type eval ---
 // Error: 7-10 expected symbol, string, label, function, regex, or selector, found color
 #show red: []
 
---- show-selector-in-expression paged ---
+--- show-selector-in-expression eval ---
 // Error: 7-25 show is only allowed directly in code and content blocks
 #(1 + show heading: none)
 
@@ -141,15 +141,15 @@ Forest
 #show: [Shown]
 Ignored
 
---- show-bare-in-expression paged ---
+--- show-bare-in-expression eval ---
 // Error: 4-19 show is only allowed directly in code and content blocks
 #((show: body => 2) * body)
 
---- show-bare-missing-colon-closure paged ---
+--- show-bare-missing-colon-closure eval ---
 // Error: 6 expected colon
 #show it => {}
 
---- show-bare-missing-colon paged ---
+--- show-bare-missing-colon eval ---
 // Error: 6 expected colon
 #show it
 
@@ -254,18 +254,23 @@ the ```rs &mut T``` reference.
 #show selector(strong).or(<special>): highlight
 I am *strong*, I am _emphasized_, and I am #[special<special>].
 
---- show-selector-element-or-text paged ---
+--- show-selector-element-or-text eval ---
 // Ensure that text selector cannot be nested in and/or. That's too complicated,
 // at least for now.
 
 // Error: 7-41 this selector cannot be used with show
 #show heading.where(level: 1).or("more"): set text(red)
 
+--- show-selector-within eval ---
+// Error: 7-33 this selector cannot currently be used with show
+// Hint: 7-33 support for this is planned for the future
+#show selector(emph).within(par): set text(red)
+
 --- show-delayed-error paged ---
-// Error: 21-34 panicked with: "hey1"
+// Error: 21-34 panicked with: hey1
 #show heading: _ => panic("hey1")
 
-// Error: 20-33 panicked with: "hey2"
+// Error: 20-33 panicked with: hey2
 #show strong: _ => panic("hey2")
 
 = Hello

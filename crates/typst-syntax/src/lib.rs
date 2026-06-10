@@ -3,7 +3,6 @@
 pub mod ast;
 pub mod package;
 
-mod file;
 mod highlight;
 mod kind;
 mod lexer;
@@ -16,7 +15,6 @@ mod set;
 mod source;
 mod span;
 
-pub use self::file::FileId;
 pub use self::highlight::{Tag, highlight, highlight_html};
 pub use self::kind::SyntaxKind;
 pub use self::lexer::{
@@ -24,11 +22,17 @@ pub use self::lexer::{
     link_prefix, split_newlines,
 };
 pub use self::lines::Lines;
-pub use self::node::{LinkedChildren, LinkedNode, Side, SyntaxError, SyntaxNode};
+pub use self::node::{
+    Diagnosis, LinkedChildren, LinkedNode, Side, SyntaxDiagnostic, SyntaxNode,
+};
 pub use self::parser::{parse, parse_code, parse_math};
-pub use self::path::VirtualPath;
+pub use self::path::{
+    FileId, PathError, RootedPath, VirtualPath, VirtualRoot, VirtualizeError,
+};
 pub use self::source::Source;
-pub use self::span::{Span, Spanned};
+pub use self::span::{
+    DiagSpan, DiagSpanKind, RangeMapper, Span, SpanKind, SpanNumber, Spanned, SubRange,
+};
 
 use self::lexer::Lexer;
 use self::parser::{reparse_block, reparse_markup};

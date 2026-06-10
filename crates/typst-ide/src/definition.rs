@@ -1,6 +1,5 @@
-use typst::foundations::{Label, Selector, Value};
-use typst::layout::PagedDocument;
-use typst::syntax::{LinkedNode, Side, Source, Span, ast};
+use typst::foundations::{AsOutput, Label, Selector, Value};
+use typst::syntax::{FileId, LinkedNode, Side, Source, Span, ast};
 use typst::utils::PicoStr;
 
 use crate::utils::globals;
@@ -14,6 +13,8 @@ use crate::{
 pub enum Definition {
     /// The item is defined at the given span.
     Span(Span),
+    /// The item is the entire included/imported file.
+    File(FileId),
     /// The item is defined in the standard library.
     Std(Value),
 }
@@ -25,7 +26,7 @@ pub enum Definition {
 /// when the document is available.
 pub fn definition(
     world: &dyn IdeWorld,
-    document: Option<&PagedDocument>,
+    output: Option<impl AsOutput>,
     source: &Source,
     cursor: usize,
     side: Side,
@@ -66,8 +67,7 @@ pub fn definition(
                 return None;
             };
             let id = module.file_id()?;
-            let span = Span::from_range(id, 0..0);
-            return Some(Definition::Span(span));
+            return Some(Definition::File(id));
         }
 
         // Try to jump to the referenced content.
@@ -75,7 +75,7 @@ pub fn definition(
             let label = Label::new(PicoStr::intern(node.cast::<ast::Ref>()?.target()))
                 .expect("unexpected empty reference");
             let selector = Selector::Label(label);
-            let elem = document?.introspector.query_first(&selector)?;
+            let elem = output?.as_output().introspector().query_first(&selector)?;
             return Some(Definition::Span(elem.span()));
         }
 
@@ -93,6 +93,7 @@ mod tests {
     use typst::WorldExt;
     use typst::foundations::{IntoValue, NativeElement};
     use typst::syntax::Side;
+    use typst_layout::PagedDocument;
 
     use super::{Definition, definition};
     use crate::tests::{FilePos, TestWorld, WorldLike};
@@ -101,6 +102,7 @@ mod tests {
 
     trait ResponseExt {
         fn must_be_at(&self, path: &str, range: Range<usize>) -> &Self;
+        fn must_be_file(&self, path: &str) -> &Self;
         fn must_be_value(&self, value: impl IntoValue) -> &Self;
     }
 
@@ -110,13 +112,21 @@ mod tests {
             match self.1 {
                 Some(Definition::Span(span)) => {
                     let range = self.0.range(span);
-                    assert_eq!(
-                        span.id().unwrap().vpath().as_rootless_path().to_string_lossy(),
-                        path
-                    );
+                    assert_eq!(span.id().unwrap().vpath().get_without_slash(), path);
                     assert_eq!(range, Some(expected));
                 }
                 _ => panic!("expected span definition"),
+            }
+            self
+        }
+
+        #[track_caller]
+        fn must_be_file(&self, path: &str) -> &Self {
+            match self.1 {
+                Some(Definition::File(file_id)) => {
+                    assert_eq!(file_id.vpath().get_without_slash(), path);
+                }
+                _ => panic!("expected file definition"),
             }
             self
         }
@@ -137,7 +147,7 @@ mod tests {
     fn test(world: impl WorldLike, pos: impl FilePos, side: Side) -> Response {
         let world = world.acquire();
         let world = world.borrow();
-        let doc = typst::compile(world).output.ok();
+        let doc = typst::compile::<PagedDocument>(world).output.ok();
         let (source, cursor) = pos.resolve(world);
         let def = definition(world, doc.as_ref(), &source, cursor, side);
         (world.clone(), def)
@@ -170,14 +180,14 @@ mod tests {
     fn test_definition_import() {
         let world = TestWorld::new("#import \"other.typ\" as o: x")
             .with_source("other.typ", "#let x = 1");
-        test(&world, 14, Side::Before).must_be_at("other.typ", 0..0);
+        test(&world, 14, Side::Before).must_be_file("other.typ");
     }
 
     #[test]
     fn test_definition_include() {
         let world = TestWorld::new("#include \"other.typ\"")
             .with_source("other.typ", "Hello there");
-        test(&world, 14, Side::Before).must_be_at("other.typ", 0..0);
+        test(&world, 14, Side::Before).must_be_file("other.typ");
     }
 
     #[test]
