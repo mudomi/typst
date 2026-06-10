@@ -7,7 +7,7 @@ use crate::foundations::{
     Value, cast, dict, func, scope, ty,
 };
 use crate::layout::{Abs, Length, Ratio};
-use crate::visualize::{Color, Gradient, Paint, Tiling, Tracing};
+use crate::visualize::{Color, Gradient, Paint, Tiling};
 
 /// Defines how to draw a line.
 ///
@@ -412,10 +412,6 @@ cast! {
     },
     tiling: Tiling => Self {
         paint: Smart::Custom(tiling.into()),
-        ..Default::default()
-    },
-    tracing: Tracing => Self {
-        paint: Smart::Custom(tracing.into()),
         ..Default::default()
     },
     mut dict: Dict => {

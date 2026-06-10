@@ -491,7 +491,7 @@ impl Curve {
 }
 
 impl Curve {
-    fn to_kurbo(&self) -> impl Iterator<Item = kurbo::PathEl> + '_ {
+    pub(crate) fn to_kurbo(&self) -> impl Iterator<Item = kurbo::PathEl> + '_ {
         use kurbo::PathEl;
 
         self.0.iter().map(|item| match *item {

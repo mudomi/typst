@@ -19,7 +19,7 @@ use crate::foundations::{
 };
 use crate::layout::{Abs, Angle, Em, Fr, Length, Ratio, Rel};
 use crate::text::{RawContent, RawElem, TextElem};
-use crate::visualize::{Color, Gradient, Tiling, Tracing};
+use crate::visualize::{Color, Gradient, Tiling};
 
 /// A computational value.
 #[derive(Default, Clone)]
@@ -51,8 +51,6 @@ pub enum Value {
     Gradient(Gradient),
     /// A tiling fill: `tiling(...)`.
     Tiling(Tiling),
-    /// A tracing pattern: `tracing(...)`.
-    Tracing(Tracing),
     /// A symbol: `arrow.l`.
     Symbol(Symbol),
     /// A version.
@@ -130,7 +128,6 @@ impl Value {
             Self::Color(_) => Type::of::<Color>(),
             Self::Gradient(_) => Type::of::<Gradient>(),
             Self::Tiling(_) => Type::of::<Tiling>(),
-            Self::Tracing(_) => Type::of::<Tracing>(),
             Self::Symbol(_) => Type::of::<Symbol>(),
             Self::Version(_) => Type::of::<Version>(),
             Self::Str(_) => Type::of::<Str>(),
@@ -237,7 +234,6 @@ impl Debug for Value {
             Self::Color(v) => Debug::fmt(v, f),
             Self::Gradient(v) => Debug::fmt(v, f),
             Self::Tiling(v) => Debug::fmt(v, f),
-            Self::Tracing(v) => Debug::fmt(v, f),
             Self::Symbol(v) => Debug::fmt(v, f),
             Self::Version(v) => Debug::fmt(v, f),
             Self::Str(v) => Debug::fmt(v, f),
@@ -275,7 +271,6 @@ impl Repr for Value {
             Self::Color(v) => v.repr(),
             Self::Gradient(v) => v.repr(),
             Self::Tiling(v) => v.repr(),
-            Self::Tracing(v) => v.repr(),
             Self::Symbol(v) => v.repr(),
             Self::Version(v) => v.repr(),
             Self::Str(v) => v.repr(),
@@ -326,7 +321,6 @@ impl Hash for Value {
             Self::Color(v) => v.hash(state),
             Self::Gradient(v) => v.hash(state),
             Self::Tiling(v) => v.hash(state),
-            Self::Tracing(v) => v.hash(state),
             Self::Symbol(v) => v.hash(state),
             Self::Version(v) => v.hash(state),
             Self::Str(v) => v.hash(state),

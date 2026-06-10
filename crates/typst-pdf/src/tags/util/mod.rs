@@ -19,7 +19,6 @@ pub fn paint_to_color(paint: &Paint) -> Option<NaiveRgbColor> {
         }
         Paint::Gradient(_) => None,
         Paint::Tiling(_) => None,
-        Paint::Tracing(_) => None,
     }
 }
 

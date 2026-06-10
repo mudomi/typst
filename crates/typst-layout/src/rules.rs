@@ -31,7 +31,7 @@ use typst_library::text::{
 };
 use typst_library::visualize::{
     CircleElem, CurveElem, EllipseElem, ImageElem, LineElem, PolygonElem, RectElem,
-    SquareElem, Stroke,
+    SquareElem, Stroke, TracingElem,
 };
 use typst_utils::{Get, Numeric};
 
@@ -101,6 +101,7 @@ pub fn register(rules: &mut NativeRuleMap) {
     rules.register(Paged, CIRCLE_RULE);
     rules.register(Paged, POLYGON_RULE);
     rules.register(Paged, CURVE_RULE);
+    rules.register(Paged, TRACING_RULE);
 
     // Math.
     rules.register(Paged, EQUATION_RULE);
@@ -800,6 +801,10 @@ const POLYGON_RULE: ShowFn<PolygonElem> = |elem, _, _| {
 
 const CURVE_RULE: ShowFn<CurveElem> = |elem, _, _| {
     Ok(BlockElem::single_layouter(elem.clone(), crate::shapes::layout_curve).pack())
+};
+
+const TRACING_RULE: ShowFn<TracingElem> = |elem, _, _| {
+    Ok(BlockElem::single_layouter(elem.clone(), crate::shapes::layout_tracing).pack())
 };
 
 const EQUATION_RULE: ShowFn<EquationElem> = |elem, _, styles| {

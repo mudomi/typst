@@ -9,9 +9,10 @@ use typst_library::layout::{
     Abs, Axes, Corner, Corners, Frame, FrameItem, Point, Ratio, Region, Rel, Sides, Size,
 };
 use typst_library::visualize::{
-    CircleElem, CloseMode, Curve, CurveComponent, CurveElem, CurveItem, EllipseElem,
-    FillRule, FixedStroke, Geometry, LineCap, LineElem, Paint, PolygonElem, RectElem,
-    Shape, SquareElem, Stroke,
+    CircleElem, CloseMode, Curve, CurveComponent, CurveElem, EllipseElem, FillRule,
+    FixedStroke, Geometry, LineCap, LineElem, Paint, PolygonElem, RectElem, Shape,
+    SquareElem, Stroke, TracingElem, apply_pattern_once, apply_tracing_in_range,
+    calculate_curve_length,
 };
 use typst_syntax::Span;
 use typst_utils::{Get, Numeric};
@@ -137,14 +138,6 @@ pub fn layout_curve(
         Smart::Auto => None,
         Smart::Custom(stroke) => stroke.map(Stroke::unwrap_or_default),
     };
-
-    // Check if the stroke contains tracing - apply pattern along path algorithm
-    if let Some(ref fixed_stroke) = stroke {
-        if let Paint::Tracing(ref tracing) = fixed_stroke.paint {
-            // Apply the pattern along path effect to the skeleton curve
-            return apply_tracing(&curve, tracing, elem, region, styles);
-        }
-    }
 
     let mut frame = Frame::soft(size);
     let shape = Shape {
@@ -1402,169 +1395,112 @@ fn bezier_arc_control(start: Point, center: Point, end: Point) -> [Point; 2] {
     [control_1, control_2]
 }
 
-/// Helper to build a curve from a content element
+/// Build the curve for a tracing skeleton or pattern from its content.
 fn build_curve_from_content(
     content: &Content,
     region: Region,
     styles: StyleChain,
-    elem: &Packed<CurveElem>,
+    span: Span,
 ) -> SourceResult<Curve> {
-    let pattern_elem = match content.to_packed::<CurveElem>() {
-        Some(elem) => elem,
-        None => {
-            bail!(elem.span(), "tracing pattern must be a curve element");
-        }
+    let Some(elem) = content.to_packed::<CurveElem>() else {
+        bail!(span, "expected a curve element");
     };
 
-    let (pattern_curve, _) = build_curve_from_components(&pattern_elem.components, region, styles);
-
-    if pattern_curve.is_empty() {
-        bail!(elem.span(), "tracing pattern curve is empty");
+    let (curve, _) = build_curve_from_components(&elem.components, region, styles);
+    if curve.is_empty() {
+        bail!(span, "curve is empty");
     }
 
-    Ok(pattern_curve)
+    Ok(curve)
 }
 
-/// Apply a pattern along a path using the tracing algorithm
-fn apply_tracing(
-    skeleton: &Curve,
-    tracing: &::typst_library::visualize::Tracing,
-    elem: &Packed<CurveElem>,
-    region: Region,
+/// Layout the tracing.
+#[typst_macros::time(span = elem.span())]
+pub fn layout_tracing(
+    elem: &Packed<TracingElem>,
+    _: &mut Engine,
+    _: Locator,
     styles: StyleChain,
+    region: Region,
 ) -> SourceResult<Frame> {
-    // Get tracing parameters
-    let (_, spacing) = tracing.params();
-    let pattern_spec = tracing.pattern();
+    let build = |content: &Content| {
+        build_curve_from_content(content, region, styles, elem.span())
+    };
 
-    // Calculate skeleton length
-    let skeleton_length = ::typst_library::visualize::calculate_curve_length(skeleton);
+    let skeleton = build(&elem.skeleton)?;
+    let skeleton_length = calculate_curve_length(&skeleton);
     if skeleton_length <= 0.0 {
         return Ok(Frame::soft(Size::zero()));
     }
 
-    // Convert spacing to absolute units
-    let spacing_abs = spacing.resolve(styles).to_raw();
+    let repeat_type = elem.repeat.get(styles);
+    let spacing = elem.spacing.resolve(styles).to_raw();
+    let pattern = &elem.pattern;
+    let start = pattern.start.as_ref().map(build).transpose()?;
+    let repeat = pattern.repeat.as_ref().map(build).transpose()?;
+    let end = pattern.end.as_ref().map(build).transpose()?;
+    let width = |curve: &Curve| curve.bbox(None).size().x.to_raw();
 
-    // Build start, repeat, and end curves if they exist
-    let start_curve = pattern_spec.start.as_ref()
-        .map(|c| build_curve_from_content(c, region, styles, elem))
-        .transpose()?;
-
-    let repeat_curve = pattern_spec.repeat.as_ref()
-        .map(|c| build_curve_from_content(c, region, styles, elem))
-        .transpose()?;
-
-    let end_curve = pattern_spec.end.as_ref()
-        .map(|c| build_curve_from_content(c, region, styles, elem))
-        .transpose()?;
-
-    // Calculate widths for each part
-    let start_width = start_curve.as_ref()
-        .map(|c| c.bbox(None).size().x.to_raw())
-        .unwrap_or(0.0);
-
-    let end_width = end_curve.as_ref()
-        .map(|c| c.bbox(None).size().x.to_raw())
-        .unwrap_or(0.0);
-
-    // Build arc length table once for all pattern applications (performance optimization)
-    let arc_table = tracing.build_skeleton_arc_table(skeleton, skeleton_length);
-
-    // Center patterns once (performance optimization)
-    let centered_start = start_curve.as_ref().map(|c| tracing.center_pattern_curve(c));
-    let centered_repeat = repeat_curve.as_ref().map(|c| tracing.center_pattern_curve(c));
-    let centered_end = end_curve.as_ref().map(|c| tracing.center_pattern_curve(c));
-
-    // Calculate section boundaries
-    let mut result_curve = Curve::new();
+    // The start and end patterns are placed once, flush with the path's
+    // endpoints; the repeat pattern fills the arc length range in between.
+    let mut traced = Curve::new();
     let mut repeat_start = 0.0;
     let mut repeat_end = skeleton_length;
 
-    // Apply start pattern if it exists
-    if let Some(start) = &start_curve {
-        let start_offset = start_width / 2.0;
-        let start_result = tracing.apply_pattern_once(
-            start,
-            skeleton,
-            skeleton_length,
-            start_offset,
-            true,
-            Some(&arc_table),
-            centered_start.as_ref(),
+    if let Some(start) = &start {
+        let start_width = width(start);
+        traced.0.extend(
+            apply_pattern_once(start, &skeleton, skeleton_length, start_width / 2.0).0,
         );
-        result_curve.0.extend(start_result.0.iter().cloned());
-        repeat_start = start_width + spacing_abs;
+        repeat_start = start_width + spacing;
     }
 
-    // Reserve space for end pattern if it exists
-    if end_curve.is_some() {
-        repeat_end = skeleton_length - end_width - spacing_abs;
+    if let Some(end) = &end {
+        let end_width = width(end);
+        let offset = skeleton_length - end_width / 2.0;
+        traced
+            .0
+            .extend(apply_pattern_once(end, &skeleton, skeleton_length, offset).0);
+        repeat_end = skeleton_length - end_width - spacing;
     }
 
-    // Apply repeat pattern if it exists and there's space
-    if let Some(repeat) = &repeat_curve {
-        if repeat_end > repeat_start {
-            let repeat_result = tracing.apply_tracing_in_range(
+    if let Some(repeat) = &repeat
+        && repeat_end > repeat_start
+    {
+        traced.0.extend(
+            apply_tracing_in_range(
+                repeat_type,
                 repeat,
-                skeleton,
-                spacing_abs,
+                &skeleton,
+                spacing,
                 skeleton_length,
                 repeat_start,
                 repeat_end,
-                Some(&arc_table),
-                centered_repeat.as_ref(),
-            );
-            result_curve.0.extend(repeat_result.0.iter().cloned());
-        }
-    }
-
-    // Apply end pattern if it exists
-    if let Some(end) = &end_curve {
-        let end_offset = skeleton_length - end_width / 2.0;
-        let end_result = tracing.apply_pattern_once(
-            end,
-            skeleton,
-            skeleton_length,
-            end_offset,
-            true,
-            Some(&arc_table),
-            centered_end.as_ref(),
+            )
+            .0,
         );
-        result_curve.0.extend(end_result.0.iter().cloned());
     }
 
-    // Use CurveBuilder to properly build the result and get correct sizing
-    let mut result_builder = CurveBuilder::new(region, styles);
-    for item in &result_curve.0 {
-        match item {
-            CurveItem::Move(p) => {
-                result_builder.move_(*p);
-            }
-            CurveItem::Line(p) => {
-                result_builder.line(*p);
-            }
-            CurveItem::Cubic(c1, c2, end) => {
-                result_builder.cubic(*c1, *c2, *end);
-            }
-            CurveItem::Close => {
-                result_builder.close(CloseMode::default());
-            }
-        }
+    if traced.is_empty() {
+        return Ok(Frame::soft(Size::zero()));
     }
 
-    let (final_curve, result_size) = result_builder.finish();
-    let mut frame = Frame::soft(result_size);
+    let fill = elem.fill.get_cloned(styles);
+    let stroke = match elem.stroke.resolve(styles) {
+        Smart::Auto if fill.is_none() => Some(FixedStroke::default()),
+        Smart::Auto => None,
+        Smart::Custom(stroke) => stroke.map(Stroke::unwrap_or_default),
+    };
 
-    if !final_curve.is_empty() {
-        let shape = Shape {
-            geometry: Geometry::Curve(final_curve),
-            stroke: Some(FixedStroke::default()),
-            fill: None,
-            fill_rule: FillRule::default(),
-        };
-        frame.push(Point::zero(), FrameItem::Shape(shape, elem.span()));
-    }
-
+    let bbox = traced.bbox(None);
+    let size = Size::new(bbox.max.x.max(Abs::zero()), bbox.max.y.max(Abs::zero()));
+    let mut frame = Frame::soft(size);
+    let shape = Shape {
+        geometry: Geometry::Curve(traced),
+        stroke,
+        fill,
+        fill_rule: FillRule::default(),
+    };
+    frame.push(Point::zero(), FrameItem::Shape(shape, elem.span()));
     Ok(frame)
 }

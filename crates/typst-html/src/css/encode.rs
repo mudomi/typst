@@ -389,7 +389,6 @@ impl ToCss for Paint {
             Self::Solid(color) => w.emit(color),
             Self::Gradient(_) => w.fail("gradient"),
             Self::Tiling(_) => w.fail("tiling"),
-            Self::Tracing(_) => w.fail("tracing"),
         }
     }
 }

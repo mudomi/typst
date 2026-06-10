@@ -32,7 +32,6 @@ pub(super) fn define(global: &mut Scope) {
     global.define_type::<Color>();
     global.define_type::<Gradient>();
     global.define_type::<Tiling>();
-    global.define_type::<Tracing>();
     global.define_type::<Stroke>();
     global.define_elem::<ImageElem>();
     global.define_elem::<LineElem>();
@@ -42,5 +41,6 @@ pub(super) fn define(global: &mut Scope) {
     global.define_elem::<CircleElem>();
     global.define_elem::<PolygonElem>();
     global.define_elem::<CurveElem>();
+    global.define_elem::<TracingElem>();
     global.reset_category();
 }

@@ -278,9 +278,6 @@ pub fn to_sk_paint<'a>(
                     .pre_translate(base_offset.x.to_f32(), base_offset.y.to_f32()),
             );
         }
-        Paint::Tracing(_) => {
-            panic!("tracing paint should have been handled by layout, not reached rendering")
-        }
     }
 
     sk_paint

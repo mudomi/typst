@@ -49,9 +49,6 @@ impl SVGRenderer<'_> {
                 let id = self.push_tiling(tiling, ts);
                 svg.attr("fill", SvgUrl(id));
             }
-            Paint::Tracing(_) => {
-                panic!("tracing paint should have been handled by layout, not reached SVG rendering")
-            }
         }
         match fill_rule {
             FillRule::NonZero => svg.attr("fill-rule", "nonzero"),
